@@ -1,0 +1,3302 @@
+--[[
+══════════════════════════════════════════════════════════════════════════════
+  ByRimuruScripts — Monochrome Studio Hub (Full TALENTLESS Architecture v8.5)
+  Baseado na análise completa do repositório github.com/hellohellohell012321/TALENTLESS
+  
+  MÓDULOS DO HELLOHELLOHELL012321 INTEGRADOS:
+  • MAIN.lua         -> Abas (Músicas, Custom, Duet, MIDI Spoofer, Settings, Info)
+  • loader_main.lua  -> Motor keypress (com mergeCount de acordes), pressnote, rest,
+                        adjustVelocity, pedalDown/pedalUp, MIDI88 (Ctrl+tecla / 88 teclas)
+                        e controles lilgui (upbpm/downbpm ±10 BPM, more/less ErrorMargin, Seek)
+  • testduetloader   -> Modo Dueto (Sincronização UTC entre 2 jogadores + Split Mão Dir/Esq)
+  • midi_spoof_loader-> Modo _G.midiSpoof (Bypass de velocidade LeftAlt + suporte MIDI direto)
+  • settings.lua     -> Todas as flags oficiais em TALENTLESS_settings.txt
+  • translator.lua   -> Dicionário multilíngue expandido
+  • Identidade Visual-> Preto, Cinza-Escuro e Grafite Semitransparente + Imagem Anime P&B Única
+══════════════════════════════════════════════════════════════════════════════
+]]
+
+-- ══════════════════════════════════════════════════════════════
+--  SERVIÇOS DO ROBLOX
+-- ══════════════════════════════════════════════════════════════
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+local HttpService      = game:GetService("HttpService")
+local SoundService     = game:GetService("SoundService")
+local ContentProvider  = game:GetService("ContentProvider")
+local VIM              = game:GetService("VirtualInputManager")
+local LocalPlayer      = Players.LocalPlayer
+
+if type(_G.ByRimuruCleanup) == "function" then
+    pcall(_G.ByRimuruCleanup)
+end
+
+local Connections = {}
+local function trackConn(conn)
+    if conn then table.insert(Connections, conn) end
+    return conn
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  IDENTIDADE & CRÉDITOS
+-- ══════════════════════════════════════════════════════════════
+local BRAND = {
+    title    = "ByRimuruScripts",
+    subtitle = "MONOCHROME STUDIO",
+    author   = "by Kokuyt450-create + ByRimuruScripts",
+    version  = "8.5.0",
+    codename = "FULL TALENTLESS CORE",
+}
+
+local CREDITS = {
+    { name = "Kokuyt450-create",     role = "UI/UX Monochrome Design & Lead Developer",      emoji = "▸" },
+    { name = "ByRimuruScripts",      role = "MIDI 2 Precision Rhythm Core & Duet Sync",      emoji = "▸" },
+    { name = "hellohellohell012321", role = "TALENTLESS Architecture, MIDI88 & MIDI2LUA",    emoji = "♪" },
+}
+
+-- ══════════════════════════════════════════════════════════════
+--  RECURSOS VISUAIS E DE ÁUDIO (ÚNICOS E MINIMALISTAS)
+-- ══════════════════════════════════════════════════════════════
+local RESOURCES = {
+    BackgroundAnimeBW  = "rbxthumb://type=Asset&id=8691163619&w=420&h=420",
+    BackgroundFallback = "rbxassetid://8691163619",
+    StartupSoundId     = "rbxassetid://4961942590",
+    StartupSoundVolume = 0.28,
+    SongsDatabaseUrl   = "https://media.base44.com/files/public/6a5b34f93e7456934ce0f0e9/545e97588_songs.txt",
+}
+
+-- ══════════════════════════════════════════════════════════════
+--  CONFIGURAÇÕES DO MOTOR (TODAS AS FLAGS DO TALENTLESS)
+-- ══════════════════════════════════════════════════════════════
+local Config = {
+    DefaultBPM           = 120,
+    MinSpeed             = 0.25,
+    MaxSpeed             = 3.00,
+    NightcoreSpeed       = 1.35,
+    TurboSpeed           = 1.75,
+    SlowedSpeed          = 0.80,
+    KeyHold              = 0.070,
+    AntiLagThrottle      = 0.004,
+    HumanizeJitter       = 0.004,
+    HumanizeEnabled      = false,
+    AntiLagEnabled       = true,
+    SubdivPerBeat        = 4,
+    DashStep             = 1.00,
+    SpaceStep            = 0.00,
+    MouseClickEnabled    = false,
+
+    -- Flags oficiais de settings.lua e loader_main.lua (hellohellohell012321)
+    SecondaryLoader      = true,   -- secondaryloader: preciseWait sub-frame
+    ErrorMargin          = 0.000,  -- errormargin: ajuste fino em segundos (botões - / + no lilgui)
+    DisableAccidents     = true,   -- disableaccidents: desativa erros falsos aleatórios
+    DisableFeaturedSongs = false,  -- disablefeaturedsongs: oculta músicas de destaque
+    AlwaysShowMidiSpoofer= true,   -- alwaysshowmidispoofer: exibe controles do MIDI Spoofer
+    MidiSpoofEnabled     = false,  -- _G.midiSpoof: injeta velocidade/notas sem limite de LeftAlt
+    Midi88Enabled        = true,   -- MIDI88: suporte a 88 teclas (Ctrl + tecla / notas 21..108)
+    ShortNotesEnabled    = true,   -- shorts: notas curtas naturais (30ms-80ms)
+    ShortMinHold         = 0.030,
+    ShortMaxHold         = 0.080,
+    ShortMinHoldShift    = 0.040,
+    ShortMaxHoldShift    = 0.115,
+    RandomShiftEnabled   = false,
+    TransposeOctave      = 0,      -- Transposição em oitavas (-2 a +2)
+
+    -- Filtro exclusivo MIDI 2
+    Midi2Exclusive       = true,
+    DeduplicateSongs     = true,
+}
+
+-- ══════════════════════════════════════════════════════════════
+--  ESTADO GLOBAL (INCLUINDO LILGUI BPM OFFSET & DUET MODE)
+-- ══════════════════════════════════════════════════════════════
+local State = {
+    currentSong    = 1,
+    isPlaying      = false,
+    isPaused       = false,
+    speed          = 1.00,
+    bpmOffset      = 0,          -- upbpm / downbpm do loader_main.lua (±10 BPM em tempo real)
+    mode           = "Normal",
+    loopEnabled    = false,
+    shuffleEnabled = false,
+    autoNext       = false,
+    progress       = 0,
+    currentNote    = 0,
+    totalNotes     = 0,
+    seekTarget     = nil,        -- Scrubbing playhead do lilgui
+    playThread     = nil,
+    customSongs    = {},
+    favorites      = {},
+    queue          = {},
+    queuePos       = 0,
+    lang           = "pt",
+    isMinimized    = false,
+
+    -- Estado do Modo Dueto (testduetloader)
+    duetRole       = "Solo",     -- "Solo" | "Part1_High" (Mão Direita) | "Part2_Low" (Mão Esquerda)
+    duetSyncWaiting= false,
+
+    stats = {
+        totalRaw      = 0,
+        keptMidi2     = 0,
+        removedLegacy = 0,
+        removedDupes  = 0,
+    },
+}
+
+-- ══════════════════════════════════════════════════════════════
+--  SISTEMA DE SETTINGS OFICIAL (settings.lua -> TALENTLESS_settings.txt)
+-- ══════════════════════════════════════════════════════════════
+local SETTINGS_FILE = "TALENTLESS_settings.txt"
+_G.talentlessSettings = _G.talentlessSettings or {
+    secondaryloader       = true,
+    disablefeaturedsongs  = false,
+    mutesfx               = false,
+    disablenotifs         = false,
+    alwaysshowmidispoofer = true,
+    disableaccidents      = true,
+    errormargin           = 0.000,
+    shorts                = true,
+    randomshift           = false,
+}
+
+local function loadSettings()
+    if isfile and readfile and isfile(SETTINGS_FILE) then
+        local ok, content = pcall(function() return readfile(SETTINGS_FILE) end)
+        if ok and content and content:find("talentlessSettings") then
+            local fn = loadstring and loadstring(content)
+            if fn then pcall(fn) end
+        end
+    end
+end
+
+local function applySettingsToConfig()
+    local ts = _G.talentlessSettings
+    if not ts then return end
+    if ts.secondaryloader       ~= nil then Config.SecondaryLoader       = (ts.secondaryloader == true) end
+    if ts.disablefeaturedsongs  ~= nil then Config.DisableFeaturedSongs  = (ts.disablefeaturedsongs == true) end
+    if ts.alwaysshowmidispoofer ~= nil then Config.AlwaysShowMidiSpoofer = (ts.alwaysshowmidispoofer == true) end
+    if ts.disableaccidents      ~= nil then Config.DisableAccidents      = (ts.disableaccidents == true) end
+    if ts.errormargin           ~= nil then Config.ErrorMargin           = tonumber(ts.errormargin) or 0 end
+    if ts.shorts                ~= nil then Config.ShortNotesEnabled     = (ts.shorts == true) end
+    if ts.randomshift           ~= nil then Config.RandomShiftEnabled    = (ts.randomshift == true) end
+end
+
+local function saveSettings()
+    if not writefile then return end
+    _G.talentlessSettings.secondaryloader       = Config.SecondaryLoader
+    _G.talentlessSettings.disablefeaturedsongs  = Config.DisableFeaturedSongs
+    _G.talentlessSettings.alwaysshowmidispoofer = Config.AlwaysShowMidiSpoofer
+    _G.talentlessSettings.disableaccidents      = Config.DisableAccidents
+    _G.talentlessSettings.errormargin           = Config.ErrorMargin
+    _G.talentlessSettings.shorts                = Config.ShortNotesEnabled
+    _G.talentlessSettings.randomshift           = Config.RandomShiftEnabled
+    local s = "_G.talentlessSettings = {\n"
+    for key, val in pairs(_G.talentlessSettings) do
+        if type(val) == "boolean" or type(val) == "number" then
+            s = s .. "['" .. tostring(key) .. "'] = " .. tostring(val) .. ",\n"
+        end
+    end
+    s = s .. "}"
+    pcall(function() writefile(SETTINGS_FILE, s) end)
+end
+
+loadSettings()
+applySettingsToConfig()
+
+-- ══════════════════════════════════════════════════════════════
+--  DICIONÁRIO MULTILÍNGUE (translator.lua)
+-- ══════════════════════════════════════════════════════════════
+local TR_STATIC = {
+    {"CATEGORIAS",                                     "CATEGORIES",                                    "CATEGORÍAS"},
+    {"Buscar música no catálogo MIDI 2...",            "Search song in MIDI 2 catalog...",              "Buscar canción en el catálogo MIDI 2..."},
+    {"SHUFFLE PLAY",                                   "SHUFFLE PLAY",                                  "ALEATORIO"},
+    {"RANDOM SONG",                                    "RANDOM SONG",                                   "CANCIÓN RANDOM"},
+    {"TOCANDO AGORA",                                  "NOW PLAYING",                                   "REPRODUCIENDO"},
+    {"▶  TOCAR MÚSICA",                                "▶  PLAY SONG",                                  "▶  REPRODUCIR"},
+    {"⏸  PAUSAR MÚSICA",                               "⏸  PAUSE SONG",                                 "⏸  PAUSAR"},
+    {"▶  RETOMAR MÚSICA",                              "▶  RESUME SONG",                                "▶  REANUDAR"},
+    {"+ Fila",                                         "+ Queue",                                       "+ Cola"},
+    {"VELOCIDADE & MODO",                              "SPEED & MODE",                                  "VELOCIDAD Y MODO"},
+    {"MÓDULOS TALENTLESS",                             "TALENTLESS MODULES",                            "MÓDULOS TALENTLESS"},
+    {"CONTROLES LILGUI (BPM / ERRO / TOM)",            "LILGUI CONTROLS (BPM / ERROR / PITCH)",         "CONTROLES LILGUI (BPM / ERROR / TONO)"},
+    {"Loop",                                           "Loop",                                          "Bucle"},
+    {"Auto",                                           "Auto",                                          "Auto"},
+    {"Config",                                         "Settings",                                      "Ajustes"},
+    {"Dueto",                                          "Duet",                                          "Dueto"},
+    {"Spoofer",                                        "Spoofer",                                       "Spoofer"},
+    {"Slow",                                           "Slow",                                          "Lento"},
+    {"Pronto.",                                        "Ready.",                                        "Listo."},
+    {"Configurações (TALENTLESS_settings.txt)",        "Settings (TALENTLESS_settings.txt)",            "Ajustes (TALENTLESS_settings.txt)"},
+    {"Créditos & Informações (info.lua)",              "Credits & Information (info.lua)",              "Créditos e Información (info.lua)"},
+    {"Adicionar Música Custom (add_song.lua)",         "Add Custom Song (add_song.lua)",                "Añadir Canción Custom (add_song.lua)"},
+    {"Modo Dueto Sincronizado (testduetloader)",       "Synchronized Duet Mode (testduetloader)",       "Modo Dueto Sincronizado (testduetloader)"},
+    {"MIDI Spoofer & MIDI88 (spooferinfo.lua)",        "MIDI Spoofer & MIDI88 (spooferinfo.lua)",       "MIDI Spoofer & MIDI88 (spooferinfo.lua)"},
+    {"SALVAR & TOCAR",                                 "SAVE & PLAY",                                   "GUARDAR Y TOCAR"},
+    {"Exportar Catálogo MIDI 2 (JSON)",                "Export MIDI 2 Catalog (JSON)",                  "Exportar Catálogo MIDI 2 (JSON)"},
+}
+
+local TR_FMT = {
+    songs   = { pt = "%d músicas MIDI 2",                     en = "%d MIDI 2 songs",                     es = "%d canciones MIDI 2" },
+    showing = { pt = "  •  mostrando %d (use a busca)",       en = "  •  showing %d (use search)",        es = "  •  mostrando %d (usa la búsqueda)" },
+    note    = { pt = "%s  •  %d%%  •  evento %d/%d",          en = "%s  •  %d%%  •  event %d/%d",         es = "%s  •  %d%%  •  evento %d/%d" },
+    ready   = { pt = "Pronto  •  Motor TALENTLESS MIDI 2",    en = "Ready  •  TALENTLESS MIDI 2 Core",    es = "Listo  •  Motor TALENTLESS MIDI 2" },
+    loaded  = { pt = "Hub carregado — %d músicas MIDI 2!",    en = "Hub loaded — %d MIDI 2 songs!",       es = "Hub cargado — ¡%d canciones MIDI 2!" },
+    all     = { pt = "Todas",                                 en = "All",                                 es = "Todas" },
+    favs    = { pt = "★ Favoritos",                           en = "★ Favorites",                         es = "★ Favoritos" },
+    custom  = { pt = "Custom",                                en = "Custom",                              es = "Custom" },
+}
+
+local function langIdx()
+    return (State.lang == "en" and 2) or (State.lang == "es" and 3) or 1
+end
+
+local function tr(key)
+    local e = TR_FMT[key]
+    if not e then return key end
+    return e[State.lang] or e.pt
+end
+
+local _trmap
+local function trMap()
+    if not _trmap then
+        _trmap = {}
+        for _, row in ipairs(TR_STATIC) do _trmap[row[1]] = row end
+    end
+    return _trmap
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  MAPA DE TECLAS, MIDI88 (88 TECLAS) E ESCALA DE TRANSPOSIÇÃO
+-- ══════════════════════════════════════════════════════════════
+local KeyMap = {
+    ["1"]=Enum.KeyCode.One,   ["2"]=Enum.KeyCode.Two,   ["3"]=Enum.KeyCode.Three,
+    ["4"]=Enum.KeyCode.Four,  ["5"]=Enum.KeyCode.Five,  ["6"]=Enum.KeyCode.Six,
+    ["7"]=Enum.KeyCode.Seven, ["8"]=Enum.KeyCode.Eight, ["9"]=Enum.KeyCode.Nine,
+    ["0"]=Enum.KeyCode.Zero,
+    ["!"]=Enum.KeyCode.One,   ["@"]=Enum.KeyCode.Two,   ["#"]=Enum.KeyCode.Three,
+    ["$"]=Enum.KeyCode.Four,  ["%"]=Enum.KeyCode.Five,  ["^"]=Enum.KeyCode.Six,
+    ["&"]=Enum.KeyCode.Seven, ["*"]=Enum.KeyCode.Eight, ["("]=Enum.KeyCode.Nine,
+    [")"]=Enum.KeyCode.Zero,
+    ["q"]=Enum.KeyCode.Q, ["w"]=Enum.KeyCode.W, ["e"]=Enum.KeyCode.E,
+    ["r"]=Enum.KeyCode.R, ["t"]=Enum.KeyCode.T, ["y"]=Enum.KeyCode.Y,
+    ["u"]=Enum.KeyCode.U, ["i"]=Enum.KeyCode.I, ["o"]=Enum.KeyCode.O,
+    ["p"]=Enum.KeyCode.P, ["a"]=Enum.KeyCode.A, ["s"]=Enum.KeyCode.S,
+    ["d"]=Enum.KeyCode.D, ["f"]=Enum.KeyCode.F, ["g"]=Enum.KeyCode.G,
+    ["h"]=Enum.KeyCode.H, ["j"]=Enum.KeyCode.J, ["k"]=Enum.KeyCode.K,
+    ["l"]=Enum.KeyCode.L, ["z"]=Enum.KeyCode.Z, ["x"]=Enum.KeyCode.X,
+    ["c"]=Enum.KeyCode.C, ["v"]=Enum.KeyCode.V, ["b"]=Enum.KeyCode.B,
+    ["n"]=Enum.KeyCode.N, ["m"]=Enum.KeyCode.M,
+    ["Q"]=Enum.KeyCode.Q, ["W"]=Enum.KeyCode.W, ["E"]=Enum.KeyCode.E,
+    ["R"]=Enum.KeyCode.R, ["T"]=Enum.KeyCode.T, ["Y"]=Enum.KeyCode.Y,
+    ["U"]=Enum.KeyCode.U, ["I"]=Enum.KeyCode.I, ["O"]=Enum.KeyCode.O,
+    ["P"]=Enum.KeyCode.P, ["A"]=Enum.KeyCode.A, ["S"]=Enum.KeyCode.S,
+    ["D"]=Enum.KeyCode.D, ["F"]=Enum.KeyCode.F, ["G"]=Enum.KeyCode.G,
+    ["H"]=Enum.KeyCode.H, ["J"]=Enum.KeyCode.J, ["K"]=Enum.KeyCode.K,
+    ["L"]=Enum.KeyCode.L, ["Z"]=Enum.KeyCode.Z, ["X"]=Enum.KeyCode.X,
+    ["C"]=Enum.KeyCode.C, ["V"]=Enum.KeyCode.V, ["B"]=Enum.KeyCode.B,
+    ["N"]=Enum.KeyCode.N, ["M"]=Enum.KeyCode.M,
+}
+
+local ShiftKeys = {
+    Q=true,W=true,E=true,R=true,T=true,Y=true,U=true,I=true,O=true,P=true,
+    A=true,S=true,D=true,F=true,G=true,H=true,J=true,K=true,L=true,
+    Z=true,X=true,C=true,V=true,B=true,N=true,M=true,
+    ["!"]=true,["@"]=true,["#"]=true,["$"]=true,["%"]=true,["^"]=true,
+    ["&"]=true,["*"]=true,["("]=true,[")"]=true,
+}
+
+-- Escala cromática de 61 teclas + Mapeamento MIDI88 (notas MIDI 21 a 108 do loader_main.lua)
+local PianoScale61 = "1!2@34$5%6^78*9(0qQwWeErtTyYuIoOpPasSdDfFgGhHjJkKlLzZxXcCvVbBnNm"
+local CharToPitchIndex = {}
+local midiKeyMappings  = {}
+for idx = 1, #PianoScale61 do
+    local ch = PianoScale61:sub(idx, idx)
+    CharToPitchIndex[ch] = idx
+    midiKeyMappings[ch]  = 35 + idx -- C2 (36) a C7 (96)
+end
+-- Extensão MIDI88 (Ctrl+tecla para oitavas extremas 21..35 e 97..108)
+for idx = 1, 15 do
+    local ch = PianoScale61:sub(idx, idx)
+    midiKeyMappings["Ctrl+" .. ch] = 20 + idx
+end
+
+local function transposeChar(ch)
+    local oct = Config.TransposeOctave or 0
+    if oct == 0 or not ch then return ch end
+    local idx = CharToPitchIndex[ch]
+    if not idx then return ch end
+    local newIdx = math.clamp(idx + (oct * 12), 1, #PianoScale61)
+    return PianoScale61:sub(newIdx, newIdx)
+end
+
+-- Filtro de Mão Direita / Mão Esquerda para o Modo Dueto (testduetloader)
+local function shouldPlayInDuetRole(ch)
+    if State.duetRole == "Solo" or not ch then return true end
+    local idx = CharToPitchIndex[ch]
+    if not idx then return true end
+    -- Ponto de divisão no Dó Central (C4 = índice 25, tecla 't')
+    if State.duetRole == "Part1_High" then
+        return idx >= 25
+    elseif State.duetRole == "Part2_Low" then
+        return idx < 25
+    end
+    return true
+end
+
+local noteMappings = {
+    ["C"]  = { [1]="1", [2]="8", [3]="t", [4]="s", [5]="l", [6]="m" },
+    ["C#"] = { [1]="!", [2]="*", [3]="T", [4]="S", [5]="L" },
+    ["Db"] = { [1]="!", [2]="*", [3]="T", [4]="S", [5]="L" },
+    ["D"]  = { [1]="2", [2]="9", [3]="y", [4]="d", [5]="z" },
+    ["D#"] = { [1]="@", [2]="(", [3]="Y", [4]="D", [5]="Z" },
+    ["Eb"] = { [1]="@", [2]="(", [3]="Y", [4]="D", [5]="Z" },
+    ["E"]  = { [1]="3", [2]="0", [3]="u", [4]="f", [5]="x" },
+    ["F"]  = { [1]="4", [2]="q", [3]="i", [4]="g", [5]="c" },
+    ["F#"] = { [1]="$", [2]="Q", [3]="I", [4]="G", [5]="C" },
+    ["Gb"] = { [1]="$", [2]="Q", [3]="I", [4]="G", [5]="C" },
+    ["G"]  = { [1]="5", [2]="w", [3]="o", [4]="h", [5]="v" },
+    ["G#"] = { [1]="%", [2]="W", [3]="O", [4]="H", [5]="V" },
+    ["Ab"] = { [1]="%", [2]="W", [3]="O", [4]="H", [5]="V" },
+    ["A"]  = { [1]="6", [2]="e", [3]="p", [4]="j", [5]="b" },
+    ["A#"] = { [1]="^", [2]="E", [3]="P", [4]="J", [5]="B" },
+    ["Bb"] = { [1]="^", [2]="E", [3]="P", [4]="J", [5]="B" },
+    ["B"]  = { [1]="7", [2]="r", [3]="a", [4]="k", [5]="n" },
+}
+
+local velocityMap = "58qrupdhl"
+local currentVelocity = 1.0
+local ActiveKeyTokens = {}
+local PedalHeld = false
+
+local function releaseAllKeys()
+    pcall(function()
+        for kc, _ in pairs(ActiveKeyTokens) do
+            VIM:SendKeyEvent(false, kc, false, game)
+        end
+        ActiveKeyTokens = {}
+        VIM:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game)
+        VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+        VIM:SendKeyEvent(false, Enum.KeyCode.LeftAlt, false, game)
+        if PedalHeld then
+            VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            PedalHeld = false
+        end
+    end)
+end
+
+local function pedalDown()
+    if not State.isPlaying then return end
+    PedalHeld = true
+    pcall(function() VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game) end)
+end
+
+local function pedalUp()
+    PedalHeld = false
+    pcall(function() VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game) end)
+end
+
+-- adjustVelocity (loader_main.lua): quando _G.midiSpoof está ativo, define currentVelocity
+-- diretamente sem gastar eventos LeftAlt de teclado!
+local function adjustVelocity(vel)
+    if not State.isPlaying then return end
+    vel = math.clamp(tonumber(vel) or 1.0, 0, 1)
+    currentVelocity = vel
+    if _G.midiSpoof or Config.MidiSpoofEnabled then
+        _G.currentMidiVelocity = math.floor(vel * 127)
+        return
+    end
+    local topress
+    if vel < 0.27 then topress = "2"
+    elseif vel >= 0.88 then topress = "c"
+    else
+        local index = math.clamp(math.floor((vel - 0.27) / 0.61 * (#velocityMap - 2)) + 2, 2, #velocityMap)
+        topress = velocityMap:sub(index, index)
+    end
+    pcall(function()
+        VIM:SendKeyEvent(true,  Enum.KeyCode.LeftAlt, false, game)
+        VIM:SendKeyEvent(true,  KeyMap[topress], false, game)
+        VIM:SendKeyEvent(false, KeyMap[topress], false, game)
+        VIM:SendKeyEvent(false, Enum.KeyCode.LeftAlt, false, game)
+    end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  IDENTIFICAÇÃO, FILTRAGEM E INTERPRETAÇÃO EXCLUSIVA MIDI 2
+-- ══════════════════════════════════════════════════════════════
+local function isMidi2LuaNative(seq)
+    if not seq or type(seq) ~= "string" then return false end
+    if seq:find("keypress%s*%(") or seq:find("pressnote%s*%(") then return true end
+    if seq:find("Generated by MIDI2LUA") then return true end
+    return false
+end
+
+local function extractMidi2LuaBPM(seq)
+    if not seq then return nil end
+    local b = seq:match("local%s+bpm%s*=%s*(%d+)") or seq:match("bpm%s*=%s*(%d+)")
+    return b and tonumber(b) or nil
+end
+
+local function extractMidi2LuaFlags(seq)
+    local flags = { shorts = true, velocity = false, midi88 = false }
+    if not seq then return flags end
+    if seq:find("Short Notes:%s*OFF") then flags.shorts = false
+    elseif seq:find("Short Notes:%s*ON") then flags.shorts = true end
+    if seq:find("Note Velocity:%s*ON") then flags.velocity = true end
+    if seq:find("MIDI88:%s*ON") then flags.midi88 = true end
+    return flags
+end
+
+local function analyzeSequence(seq)
+    if not seq or type(seq) ~= "string" then
+        return { dashes = 0, spaces = 0, notes = 0, len = 0, dashRatio = 0, spaceRatio = 0 }
+    end
+    local dashes, spaces, notes = 0, 0, 0
+    local len = #seq
+    for i = 1, len do
+        local c = seq:sub(i, i)
+        if c == "-" then dashes = dashes + 1
+        elseif c == " " then spaces = spaces + 1
+        elseif c ~= "[" and c ~= "]" then notes = notes + 1 end
+    end
+    return {
+        dashes     = dashes,
+        spaces     = spaces,
+        notes      = notes,
+        len        = len,
+        dashRatio  = (len > 0) and (dashes / len) or 0,
+        spaceRatio = (len > 0) and (spaces / len) or 0,
+    }
+end
+
+local function isMidi2Song(song, stats)
+    if not song or type(song.sequence) ~= "string" then return false end
+    if song.custom == true then return true end
+    if isMidi2LuaNative(song.sequence) then return true end
+    if song.midi2lua == true then return true end
+
+    local fmt = string.lower(tostring(song.format or song.source or ""))
+    if fmt:find("midi2") or fmt:find("m2l") then return true end
+
+    local cat = string.lower(tostring(song.category or ""))
+    if cat:find("midi2") or cat:find("midi 2") or cat == "midi" then return true end
+
+    local nm = string.lower(tostring(song.name or ""))
+    if nm:find("midi2") or nm:find("midi 2") or nm:find("m2l") then return true end
+
+    stats = stats or analyzeSequence(song.sequence)
+    if stats.dashes >= 16 and stats.dashRatio >= 0.25 and stats.spaceRatio < 0.15 then
+        return true
+    end
+    return false
+end
+
+local function isPlayableSeq(seq)
+    if not seq or type(seq) ~= "string" then return false end
+    if isMidi2LuaNative(seq) then return true end
+    local n = 0
+    for i = 1, #seq do
+        local c = seq:sub(i, i)
+        if KeyMap[c] then
+            n = n + 1
+            if n >= 3 then return true end
+        end
+    end
+    return false
+end
+
+local function cleanSongName(rawName)
+    local s = tostring(rawName or "Sem Título")
+    s = s:gsub("%.[mM][iI][dD][iI]?$", "")
+    s = s:gsub("%.[lL][uU][aA]$", "")
+    s = s:gsub("%.[tT][xX][tT]$", "")
+    s = s:gsub("%b[]", function(m)
+        local low = m:lower()
+        if low:find("midi") or low:find("m2l") then return "" end
+        return m
+    end)
+    s = s:gsub("%b()", function(m)
+        local low = m:lower()
+        if low:find("midi") or low:find("m2l") then return "" end
+        return m
+    end)
+    s = s:gsub("[%-–—]%s*[mM][iI][dD][iI]%s*2?[lL]?[uU]?[aA]?$", "")
+    s = s:gsub("_+", " ")
+    s = s:gsub("%(%s*%)", "")
+    s = s:gsub("%[%s*%]", "")
+    s = s:gsub("%s+", " ")
+    s = s:match("^%s*(.-)%s*$") or s
+    if s == "" then s = "Track MIDI 2" end
+    return s
+end
+
+local function normalizeSongKey(cleanName)
+    return string.lower(cleanName):gsub("[%s%p]+", "")
+end
+
+local function prepareSong(song)
+    if not song then return song end
+    local stats = analyzeSequence(song.sequence)
+    local native = isMidi2LuaNative(song.sequence)
+    local bpm = tonumber(song.bpm) or 0
+
+    song.name             = cleanSongName(song.name)
+    song._stats           = stats
+    song._midi2lua        = true
+    song._midi2lua_native = native
+
+    if native then
+        local scriptBPM = extractMidi2LuaBPM(song.sequence)
+        if bpm <= 0 then
+            bpm = (scriptBPM and scriptBPM > 0) and scriptBPM or Config.DefaultBPM
+        end
+        song._m2l_flags = extractMidi2LuaFlags(song.sequence)
+    else
+        if bpm <= 0 then
+            bpm = Config.DefaultBPM
+        end
+    end
+
+    song._play_bpm   = bpm
+    song._speed_mult = tonumber(song.speed_mult) or 1.0
+    song._prepared   = true
+    return song
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CARREGAMENTO DA URL ORIGINAL + FILTRO MIDI 2 & DEDUPLICAÇÃO
+-- ══════════════════════════════════════════════════════════════
+local RawSongs = {}
+local Songs    = {}
+
+do
+    local function fetchUrl(url)
+        local req = request or http_request or (syn and syn.request) or (http and http.request)
+        if req then
+            local ok, res = pcall(req, { Url = url, Method = "GET" })
+            if ok and res and (res.Body or res.body) then
+                local body = res.Body or res.body
+                if #body > 100 then return body end
+            end
+        end
+        local ok2, res2 = pcall(function()
+            return game:HttpGet(url, true)
+        end)
+        if ok2 and res2 and #res2 > 100 then return res2 end
+        return nil
+    end
+
+    local code = fetchUrl(RESOURCES.SongsDatabaseUrl)
+    if code and loadstring then
+        local fn = loadstring(code)
+        if fn then
+            local env = setmetatable({ Songs = RawSongs }, { __index = getfenv and getfenv(0) or _G })
+            if setfenv then pcall(setfenv, fn, env) end
+            local ok = pcall(fn)
+            if ok and env.Songs then
+                for k, v in pairs(env.Songs) do
+                    RawSongs[k] = v
+                end
+            end
+        end
+    end
+end
+
+local PlayableIdx    = {}
+local PlayableLookup = {}
+local CategoryCount  = {}
+
+local function processAndFilterSongs()
+    Songs          = {}
+    PlayableIdx    = {}
+    PlayableLookup = {}
+    CategoryCount  = {}
+
+    local seenKeys      = {}
+    local keptMidi2     = 0
+    local removedLegacy = 0
+    local removedDupes  = 0
+
+    local function considerSong(raw)
+        if not raw or not isPlayableSeq(raw.sequence) then
+            removedLegacy = removedLegacy + 1
+            return
+        end
+        if Config.DisableFeaturedSongs and string.lower(tostring(raw.category or "")) == "featured" then
+            return
+        end
+        local stats = analyzeSequence(raw.sequence)
+        if Config.Midi2Exclusive and not isMidi2Song(raw, stats) then
+            removedLegacy = removedLegacy + 1
+            return
+        end
+
+        local cleanedName = cleanSongName(raw.name)
+        local normKey     = normalizeSongKey(cleanedName)
+
+        if Config.DeduplicateSongs and normKey ~= "" and seenKeys[normKey] then
+            local existingIdx = seenKeys[normKey]
+            local existing = Songs[existingIdx]
+            if existing and (#tostring(raw.sequence) > #tostring(existing.sequence)) then
+                raw.name = cleanedName
+                prepareSong(raw)
+                Songs[existingIdx] = raw
+            end
+            removedDupes = removedDupes + 1
+            return
+        end
+
+        local entry = {
+            name       = cleanedName,
+            bpm        = tonumber(raw.bpm) or 0,
+            emoji      = "♪",
+            category   = (raw.category and raw.category ~= "") and tostring(raw.category) or "MIDI 2",
+            sequence   = raw.sequence,
+            custom     = raw.custom == true,
+            midi2lua   = true,
+            speed_mult = raw.speed_mult,
+        }
+        prepareSong(entry)
+
+        table.insert(Songs, entry)
+        local newIdx = #Songs
+        if normKey ~= "" then
+            seenKeys[normKey] = newIdx
+        end
+        keptMidi2 = keptMidi2 + 1
+    end
+
+    State.stats.totalRaw = #RawSongs
+    for i = 1, #RawSongs do
+        considerSong(RawSongs[i])
+    end
+
+    for _, c in ipairs(State.customSongs) do
+        considerSong({
+            name     = c.name,
+            bpm      = c.bpm or 120,
+            category = "Custom",
+            sequence = c.sequence,
+            custom   = true,
+            midi2lua = true,
+        })
+    end
+
+    for i = 1, #Songs do
+        local s = Songs[i]
+        if s then
+            table.insert(PlayableIdx, i)
+            PlayableLookup[i] = #PlayableIdx
+            local cat = s.category or "MIDI 2"
+            CategoryCount[cat] = (CategoryCount[cat] or 0) + 1
+        end
+    end
+
+    State.stats.keptMidi2     = keptMidi2
+    State.stats.removedLegacy = removedLegacy
+    State.stats.removedDupes  = removedDupes
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  PERSISTÊNCIA DE DADOS DO USUÁRIO
+-- ══════════════════════════════════════════════════════════════
+local SAVE_FILE = "Talentless_Kokuyt450.json"
+
+local function saveData()
+    pcall(function()
+        if not writefile then return end
+        writefile(SAVE_FILE, HttpService:JSONEncode({
+            customSongs = State.customSongs,
+            favorites   = State.favorites,
+            lang        = State.lang,
+        }))
+    end)
+end
+
+local function loadData()
+    pcall(function()
+        if isfile and readfile and isfile(SAVE_FILE) then
+            local d = HttpService:JSONDecode(readfile(SAVE_FILE))
+            if d then
+                State.customSongs = d.customSongs or {}
+                State.favorites   = d.favorites   or {}
+                State.lang        = d.lang        or State.lang
+            end
+        end
+    end)
+end
+
+local function exportRealCatalogJSON()
+    local exportList = {}
+    for i, s in ipairs(Songs) do
+        exportList[#exportList + 1] = {
+            id       = i,
+            name     = s.name,
+            bpm      = s._play_bpm or s.bpm or 120,
+            category = s.category or "MIDI 2",
+            format   = s._midi2lua_native and "MIDI 2 Native" or "MIDI 2 Grid",
+            notes    = s._stats and s._stats.notes or 0,
+        }
+    end
+    local jsonStr = HttpService:JSONEncode({
+        source  = RESOURCES.SongsDatabaseUrl,
+        stats   = State.stats,
+        catalog = exportList,
+    })
+    if writefile then
+        pcall(function() writefile("Catalogo_MIDI2_Real.json", jsonStr) end)
+    end
+    if setclipboard then
+        pcall(function() setclipboard(jsonStr) end)
+    end
+    return #exportList
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  PARSERS MIDI 2 (INCLUINDO MERGE DE ACORDES E MIDI88 CTRL+)
+-- ══════════════════════════════════════════════════════════════
+local function parseMidi2GridSequence(seq)
+    local cleaned = (seq or ""):gsub("^[-%s]+", ""):gsub("[-%s]+$", "")
+    local tokens, i, len = {}, 1, #cleaned
+    while i <= len do
+        local ch = cleaned:sub(i, i)
+        if ch == "[" then
+            local j = cleaned:find("]", i)
+            if j then
+                local keys = {}
+                for k = i + 1, j - 1 do
+                    local c = cleaned:sub(k, k)
+                    if KeyMap[c] then
+                        keys[#keys + 1] = { key = KeyMap[c], shift = ShiftKeys[c] or false, char = c }
+                    end
+                end
+                if #keys > 0 then
+                    tokens[#tokens + 1] = { type = "chord", keys = keys }
+                end
+                i = j + 1
+            else
+                i = i + 1
+            end
+        elseif ch == "-" then
+            tokens[#tokens + 1] = { type = "dash" }
+            i = i + 1
+        elseif KeyMap[ch] then
+            tokens[#tokens + 1] = { type = "note", key = KeyMap[ch], shift = ShiftKeys[ch] or false, char = ch }
+            i = i + 1
+        else
+            i = i + 1
+        end
+    end
+    return tokens
+end
+
+-- Parser MIDI2LUA Nativo (loader_main.lua):
+-- Suporta mergeCount (funde keypress consecutivos de mesma duração em acordes limpos)
+-- e suporta modificadores "Ctrl+" do modo MIDI88!
+local function parseMidi2LuaScript(seq)
+    local actions = {}
+    if not seq then return actions end
+    local cleaned = seq:gsub("%-%-[^\r\n]*", " ")
+
+    for fnName, argsStr in cleaned:gmatch("([a-zA-Z_][a-zA-Z0-9_]*)%s*(%b())") do
+        local inner = argsStr:sub(2, -2)
+        if fnName == "keypress" then
+            local keys, beats = inner:match('^%s*["\']([^"\']+)["\']%s*,%s*([^,%s)]+)')
+            if keys then
+                local b = tonumber(beats)
+                local hasCtrl = keys:find("Ctrl%+") ~= nil
+                local prev = actions[#actions]
+                -- Otimização oficial do loader_main.lua: funde keypress consecutivos sem rest entre eles
+                if prev and prev.type == "keypress" and prev.beats == b and not prev.hasCtrl and not hasCtrl then
+                    prev.keys = prev.keys .. keys
+                    prev.mergeCount = (prev.mergeCount or 1) + 1
+                else
+                    actions[#actions + 1] = {
+                        type       = "keypress",
+                        keys       = keys,
+                        beats      = b,
+                        isShort    = (b == nil),
+                        hasCtrl    = hasCtrl,
+                        mergeCount = 1,
+                    }
+                end
+            end
+        elseif fnName == "pressnote" then
+            local note, octave, pbeats = inner:match('^%s*["\']([^"\']+)["\']%s*,%s*(%d+)%s*,%s*([^,%s)]+)')
+            if note then
+                local b = tonumber(pbeats)
+                actions[#actions + 1] = {
+                    type    = "pressnote",
+                    note    = note,
+                    octave  = tonumber(octave),
+                    beats   = b,
+                    isShort = (b == nil),
+                }
+            end
+        elseif fnName == "rest" then
+            local rbeats = inner:match("^%s*([%d%.]+)")
+            if rbeats then
+                actions[#actions + 1] = {
+                    type  = "rest",
+                    beats = tonumber(rbeats) or 0.25,
+                }
+            end
+        elseif fnName == "adjustVelocity" then
+            local vel = inner:match("^%s*([%d%.]+)")
+            if vel then
+                actions[#actions + 1] = {
+                    type = "adjustVelocity",
+                    vel  = tonumber(vel) or 1.0,
+                }
+            end
+        elseif fnName == "pedalDown" then
+            actions[#actions + 1] = { type = "pedalDown" }
+        elseif fnName == "pedalUp" then
+            actions[#actions + 1] = { type = "pedalUp" }
+        end
+    end
+    return actions
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  MODO MOUSE (EXPERIMENTAL)
+-- ══════════════════════════════════════════════════════════════
+local MouseMap = nil
+
+local function isHubObj(o)
+    local cur = o
+    while cur and cur ~= game do
+        local n = tostring(cur.Name):lower()
+        if n:find("rimuru") or n:find("talentless") then return true end
+        cur = cur.Parent
+    end
+    return false
+end
+
+local function buildMouseMap()
+    MouseMap = {}
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    for _, o in ipairs(pg:GetDescendants()) do
+        if (o:IsA("TextButton") or o:IsA("ImageButton")) and not isHubObj(o) then
+            local id
+            local nm = tostring(o.Name)
+            if #nm == 1 then id = nm
+            else
+                local t = ""
+                pcall(function() t = tostring(o.Text or "") end)
+                if #t == 1 then id = t end
+            end
+            if id and not MouseMap[id] then MouseMap[id] = o end
+        end
+    end
+end
+
+local function clickKeyChar(char, holdTime)
+    if not char then return false end
+    if not MouseMap then buildMouseMap() end
+    local btn = MouseMap and (MouseMap[char] or MouseMap[char:lower()] or MouseMap[char:upper()])
+    if not btn or not btn.Parent then return false end
+    local p, s = btn.AbsolutePosition, btn.AbsoluteSize
+    local x, y = math.floor(p.X + s.X / 2), math.floor(p.Y + s.Y / 2)
+    pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true, game, 0) end)
+    task.delay(holdTime or Config.KeyHold, function()
+        pcall(function() VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
+    end)
+    return true
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  ENVIO DE TECLAS — ASSÍNCRONO + SUPORTE A MIDI88 & DUETO
+-- ══════════════════════════════════════════════════════════════
+local function preciseWait(seconds)
+    if seconds <= 0 then return end
+    local start = os.clock()
+    while os.clock() - start < seconds do
+        if not State.isPlaying then return end
+        if seconds - (os.clock() - start) > 0.014 then
+            RunService.Heartbeat:Wait()
+        else
+            break
+        end
+    end
+    while os.clock() - start < seconds do
+        if not State.isPlaying then return end
+    end
+end
+
+local function calcHoldTime(shift, isShort, explicitHoldSec)
+    if explicitHoldSec and explicitHoldSec > 0 then
+        return math.clamp(explicitHoldSec, 0.02, 2.50)
+    end
+    if isShort and Config.ShortNotesEnabled then
+        if shift then
+            return Config.ShortMinHoldShift + math.random() * (Config.ShortMaxHoldShift - Config.ShortMinHoldShift)
+        else
+            return Config.ShortMinHold + math.random() * (Config.ShortMaxHold - Config.ShortMinHold)
+        end
+    end
+    return Config.KeyHold
+end
+
+local function scheduleKeyRelease(keyCode, shift, ctrl, holdTime)
+    local token = os.clock() + math.random()
+    ActiveKeyTokens[keyCode] = token
+    task.spawn(function()
+        if Config.SecondaryLoader then
+            preciseWait(holdTime)
+        else
+            task.wait(holdTime)
+        end
+        if ActiveKeyTokens[keyCode] == token then
+            ActiveKeyTokens[keyCode] = nil
+            pcall(function()
+                VIM:SendKeyEvent(false, keyCode, false, game)
+                if shift then VIM:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game) end
+                if ctrl  then VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) end
+            end)
+        end
+    end)
+end
+
+local function pressKey(keyCode, shift, char, isShort, explicitHoldSec, ctrl)
+    if not State.isPlaying then return end
+    local actualChar  = transposeChar(char) or char
+    if not shouldPlayInDuetRole(actualChar) then return end
+
+    local actualKey   = KeyMap[actualChar] or keyCode
+    local actualShift = (ShiftKeys[actualChar] ~= nil) and ShiftKeys[actualChar] or shift
+    local holdTime    = calcHoldTime(actualShift, isShort, explicitHoldSec)
+
+    if Config.MouseClickEnabled and clickKeyChar(actualChar, holdTime) then return end
+
+    if not Config.DisableAccidents and not actualShift and Config.RandomShiftEnabled and Config.ErrorMargin > 0 then
+        if math.random(1, 500) <= math.floor(Config.ErrorMargin * 100) then
+            actualShift = true
+        end
+    end
+
+    pcall(function()
+        if ctrl        then VIM:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game) end
+        if actualShift then VIM:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game) end
+        VIM:SendKeyEvent(true, actualKey, false, game)
+    end)
+
+    scheduleKeyRelease(actualKey, actualShift, ctrl, holdTime)
+end
+
+local function playChord(keys, isShort, explicitHoldSec)
+    if not State.isPlaying or not keys or #keys == 0 then return end
+    local holdTime = calcHoldTime(true, isShort, explicitHoldSec)
+
+    local kb = {}
+    for _, k in ipairs(keys) do
+        local tc = transposeChar(k.char) or k.char
+        if shouldPlayInDuetRole(tc) then
+            local tk = KeyMap[tc] or k.key
+            local ts = (ShiftKeys[tc] ~= nil) and ShiftKeys[tc] or k.shift
+            if not (Config.MouseClickEnabled and clickKeyChar(tc, holdTime)) then
+                kb[#kb + 1] = { key = tk, shift = ts, char = tc }
+            end
+        end
+    end
+    if #kb == 0 then return end
+
+    local nonShift, withShift = {}, {}
+    for _, k in ipairs(kb) do
+        if k.shift then withShift[#withShift + 1] = k
+        else nonShift[#nonShift + 1] = k end
+    end
+
+    local token = os.clock() + math.random()
+    pcall(function()
+        for _, k in ipairs(nonShift) do
+            ActiveKeyTokens[k.key] = token
+            VIM:SendKeyEvent(true, k.key, false, game)
+        end
+        if #withShift > 0 then
+            VIM:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game)
+            for _, k in ipairs(withShift) do
+                ActiveKeyTokens[k.key] = token
+                VIM:SendKeyEvent(true, k.key, false, game)
+            end
+        end
+    end)
+
+    task.spawn(function()
+        if Config.SecondaryLoader then
+            preciseWait(holdTime)
+        else
+            task.wait(holdTime)
+        end
+        pcall(function()
+            if #withShift > 0 then
+                for _, k in ipairs(withShift) do
+                    if ActiveKeyTokens[k.key] == token then
+                        ActiveKeyTokens[k.key] = nil
+                        VIM:SendKeyEvent(false, k.key, false, game)
+                    end
+                end
+                VIM:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game)
+            end
+            for _, k in ipairs(nonShift) do
+                if ActiveKeyTokens[k.key] == token then
+                    ActiveKeyTokens[k.key] = nil
+                    VIM:SendKeyEvent(false, k.key, false, game)
+                end
+            end
+        end)
+    end)
+end
+
+local function keypressStr(keys, isShort, explicitHoldSec)
+    if not keys or keys == "" then return end
+    -- Suporte ao prefixo "Ctrl+" do modo MIDI88 (loader_main.lua)
+    if keys:sub(1, 5) == "Ctrl+" and Config.Midi88Enabled then
+        local ch = keys:sub(6, 6)
+        if KeyMap[ch] then
+            pressKey(KeyMap[ch], ShiftKeys[ch] or false, ch, isShort, explicitHoldSec, true)
+        end
+        return
+    end
+    local list = {}
+    for i = 1, #keys do
+        local c = keys:sub(i, i)
+        if KeyMap[c] then
+            list[#list + 1] = { key = KeyMap[c], shift = ShiftKeys[c] or false, char = c }
+        end
+    end
+    if #list == 1 then
+        pressKey(list[1].key, list[1].shift, list[1].char, isShort, explicitHoldSec, false)
+    elseif #list > 1 then
+        playChord(list, isShort, explicitHoldSec)
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  MOTOR DE RITMO — AGENDAMENTO ABSOLUTO + CONTROLES LILGUI
+--  Inclui upbpm/downbpm (±10 BPM em tempo real) e scrubbing (Seek)
+-- ══════════════════════════════════════════════════════════════
+local function getEffectiveSpeed()
+    local sm = State.speed
+    if State.mode == "Nightcore" then sm = sm * Config.NightcoreSpeed
+    elseif State.mode == "Turbo" then sm = sm * Config.TurboSpeed
+    elseif State.mode == "Slowed" then sm = sm * Config.SlowedSpeed end
+    return math.max(0.1, sm)
+end
+
+local function getActiveSongBPM(song)
+    local base = (song and (song._play_bpm or song.bpm)) or Config.DefaultBPM
+    return math.clamp(base + (State.bpmOffset or 0), 20, 480)
+end
+
+local function baseStep(song)
+    if song and not song._prepared then prepareSong(song) end
+    local bpm  = getActiveSongBPM(song)
+    local mult = (song and (song._speed_mult or song.speed_mult)) or 1.0
+    local step = (60 / bpm) * (1 / Config.SubdivPerBeat) / mult
+    local d    = step / getEffectiveSpeed()
+    if Config.AntiLagEnabled and d < Config.AntiLagThrottle then d = Config.AntiLagThrottle end
+    return d
+end
+
+local function playSong(idx)
+    local song = Songs[idx]
+    if not song then return end
+    if not song._prepared then prepareSong(song) end
+    releaseAllKeys()
+
+    -- ═══ 1. EXECUÇÃO MIDI 2 NATIVA (keypress / pressnote / rest) ═══
+    if song._midi2lua_native then
+        local actions = parseMidi2LuaScript(song.sequence)
+        local flags   = song._m2l_flags or { shorts = true, velocity = false }
+        State.totalNotes  = #actions
+        State.currentNote = 0
+        State.progress    = 0
+        State.seekTarget  = nil
+        if #actions == 0 then return end
+
+        local startClock  = os.clock()
+        local virtualTime = 0
+        local ai          = 1
+
+        while ai <= #actions and State.isPlaying do
+            while State.isPaused do
+                releaseAllKeys()
+                task.wait(0.03)
+                if not State.isPlaying then return end
+                startClock = os.clock() - virtualTime
+            end
+
+            -- Playhead Scrubbing (Seek da barra de progresso do lilgui)
+            if State.seekTarget then
+                local targetIdx = math.clamp(math.floor(State.seekTarget * #actions), 1, #actions)
+                State.seekTarget = nil
+                releaseAllKeys()
+                ai = targetIdx
+                virtualTime = 0
+                startClock = os.clock()
+            end
+
+            local action       = actions[ai]
+            local bpm          = getActiveSongBPM(song)
+            local effSpeed     = getEffectiveSpeed()
+            local isShort      = flags.shorts and (action.isShort ~= false)
+            local explicitHold = nil
+
+            if action.beats and type(action.beats) == "number" then
+                isShort = false
+                explicitHold = (action.beats / bpm) * 60 / effSpeed
+            end
+
+            if action.type == "keypress" then
+                keypressStr(action.keys, isShort, explicitHold)
+            elseif action.type == "pressnote" then
+                local map = noteMappings[action.note]
+                if map and map[action.octave] then
+                    local ch = map[action.octave]
+                    local kc = KeyMap[ch]
+                    if kc then
+                        pressKey(kc, ShiftKeys[ch] or false, ch, isShort, explicitHold, false)
+                    end
+                end
+            elseif action.type == "rest" then
+                local waitTime = ((action.beats or 0.25) / bpm) * 60 / effSpeed
+                virtualTime = virtualTime + waitTime
+                local jit = 0
+                if Config.ErrorMargin > 0 or Config.HumanizeEnabled then
+                    local m = math.max(Config.ErrorMargin, Config.HumanizeEnabled and Config.HumanizeJitter or 0)
+                    jit = (math.random() * 2 - 1) * (m * 0.5)
+                end
+                local target = startClock + virtualTime + jit
+                local rem = target - os.clock()
+                if rem > 0 then
+                    preciseWait(rem)
+                end
+            elseif action.type == "adjustVelocity" then
+                adjustVelocity(action.vel)
+            elseif action.type == "pedalDown" then
+                pedalDown()
+            elseif action.type == "pedalUp" then
+                pedalUp()
+            end
+
+            State.currentNote = ai
+            State.progress    = ai / #actions
+            ai = ai + 1
+
+            if ai % 32 == 0 then
+                RunService.Heartbeat:Wait()
+            end
+        end
+        releaseAllKeys()
+        return
+    end
+
+    -- ═══ 2. EXECUÇÃO MIDI 2 EM GRADE (Grid) ═══
+    local tokens = parseMidi2GridSequence(song.sequence)
+    State.totalNotes  = #tokens
+    State.currentNote = 0
+    State.progress    = 0
+    State.seekTarget  = nil
+    if #tokens == 0 then return end
+
+    local startClock  = os.clock()
+    local virtualTime = 0
+    local catchUp     = 0
+    local ti          = 1
+
+    while ti <= #tokens and State.isPlaying do
+        while State.isPaused do
+            releaseAllKeys()
+            task.wait(0.03)
+            if not State.isPlaying then return end
+            startClock = os.clock() - virtualTime
+        end
+
+        if State.seekTarget then
+            local targetIdx = math.clamp(math.floor(State.seekTarget * #tokens), 1, #tokens)
+            State.seekTarget = nil
+            releaseAllKeys()
+            ti = targetIdx
+            virtualTime = 0
+            startClock = os.clock()
+        end
+
+        local token        = tokens[ti]
+        local step         = baseStep(song)
+        local nextTok      = tokens[ti + 1]
+        local hasDashAfter = (nextTok and nextTok.type == "dash")
+        local isShort      = Config.ShortNotesEnabled
+
+        local fired = false
+        if token.type == "note" then
+            pressKey(token.key, token.shift, token.char, isShort, nil, false)
+            if not hasDashAfter then
+                virtualTime = virtualTime + step
+            end
+            fired = true
+        elseif token.type == "chord" then
+            playChord(token.keys, isShort, nil)
+            if not hasDashAfter then
+                virtualTime = virtualTime + step
+            end
+            fired = true
+        elseif token.type == "dash" then
+            virtualTime = virtualTime + step
+        end
+
+        local jit = 0
+        if fired and (Config.HumanizeEnabled or Config.ErrorMargin > 0) then
+            local m = math.max(Config.ErrorMargin, Config.HumanizeEnabled and Config.HumanizeJitter or 0)
+            jit = (math.random() * 2 - 1) * m
+        end
+
+        State.currentNote = ti
+        State.progress    = ti / #tokens
+
+        local target = startClock + virtualTime + jit
+        local now    = os.clock()
+        if now < target then
+            catchUp = 0
+            local remaining = target - now
+            if Config.SecondaryLoader then
+                preciseWait(remaining)
+            else
+                if remaining > 0.03 then task.wait(remaining - 0.012) end
+                while os.clock() < target do
+                    if not State.isPlaying then break end
+                    RunService.Heartbeat:Wait()
+                end
+            end
+        else
+            catchUp = catchUp + 1
+            if catchUp >= 24 then
+                catchUp = 0
+                RunService.Heartbeat:Wait()
+            end
+        end
+
+        ti = ti + 1
+    end
+    releaseAllKeys()
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CONTROLES DE REPRODUÇÃO & FILA
+-- ══════════════════════════════════════════════════════════════
+local refreshNowPlaying, refreshList
+
+local function getRandomPlayable()
+    if #PlayableIdx == 0 then return 1 end
+    return PlayableIdx[math.random(1, #PlayableIdx)]
+end
+
+local function stopPlayback()
+    State.isPlaying       = false
+    State.isPaused        = false
+    State.duetSyncWaiting = false
+    State.progress        = 0
+    State.currentNote     = 0
+    State.seekTarget      = nil
+    releaseAllKeys()
+    if State.playThread then
+        pcall(function() task.cancel(State.playThread) end)
+        State.playThread = nil
+    end
+end
+
+local function startPlayback()
+    if State.isPlaying or #Songs == 0 then return end
+    State.isPlaying = true
+    State.isPaused  = false
+    State.playThread = task.spawn(function()
+        repeat
+            playSong(State.currentSong)
+            if State.isPlaying then
+                if not State.autoNext and not State.loopEnabled then
+                    State.isPlaying = false
+                elseif State.loopEnabled then
+                    -- repete a mesma música
+                elseif #State.queue > 0 then
+                    State.queuePos = (State.queuePos % #State.queue) + 1
+                    State.currentSong = State.queue[State.queuePos]
+                elseif State.shuffleEnabled then
+                    State.currentSong = getRandomPlayable()
+                else
+                    State.currentSong = (State.currentSong % #Songs) + 1
+                end
+                if State.isPlaying then
+                    if refreshNowPlaying then pcall(refreshNowPlaying) end
+                    if refreshList then pcall(refreshList) end
+                end
+            end
+        until not State.isPlaying
+        State.isPlaying = false
+        releaseAllKeys()
+        if refreshNowPlaying then pcall(refreshNowPlaying) end
+    end)
+end
+
+local function pauseResume()
+    if not State.isPlaying then
+        startPlayback()
+    else
+        State.isPaused = not State.isPaused
+        if State.isPaused then releaseAllKeys() end
+    end
+end
+
+local function nextSong()
+    if #Songs == 0 then return end
+    stopPlayback()
+    State.bpmOffset = 0
+    if #State.queue > 0 then
+        State.queuePos = (State.queuePos % #State.queue) + 1
+        State.currentSong = State.queue[State.queuePos]
+    elseif State.shuffleEnabled then
+        State.currentSong = getRandomPlayable()
+    else
+        State.currentSong = (State.currentSong % #Songs) + 1
+    end
+end
+
+local function prevSong()
+    if #Songs == 0 then return end
+    stopPlayback()
+    State.bpmOffset = 0
+    State.currentSong = ((State.currentSong - 2) % #Songs) + 1
+end
+
+local function playIndex(idx, autoNext)
+    if not Songs[idx] then return end
+    stopPlayback()
+    State.bpmOffset   = 0
+    State.currentSong = idx
+    if autoNext ~= nil then State.autoNext = autoNext and true or false end
+    startPlayback()
+end
+
+loadData()
+processAndFilterSongs()
+if not Songs[State.currentSong] then
+    State.currentSong = PlayableIdx[1] or 1
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  PALETA MONOCROMÁTICA — PRETO, CINZA-ESCURO E GRAFITE
+-- ══════════════════════════════════════════════════════════════
+local Theme = {
+    bg           = Color3.fromRGB(10, 10, 12),
+    bg2          = Color3.fromRGB(16, 16, 19),
+    panel        = Color3.fromRGB(22, 22, 26),
+    panel2       = Color3.fromRGB(30, 30, 35),
+    panelHover   = Color3.fromRGB(42, 42, 49),
+    border       = Color3.fromRGB(68, 68, 76),
+    borderActive = Color3.fromRGB(185, 185, 195),
+
+    accent       = Color3.fromRGB(232, 232, 238),
+    accentMuted  = Color3.fromRGB(175, 175, 185),
+    accentDark   = Color3.fromRGB(12, 12, 15),
+    danger       = Color3.fromRGB(190, 90, 95),
+
+    text         = Color3.fromRGB(240, 240, 245),
+    sub          = Color3.fromRGB(148, 148, 158),
+    muted        = Color3.fromRGB(96, 96, 106),
+
+    FONT         = Enum.Font.GothamBold,
+    FONTB        = Enum.Font.GothamBlack,
+    FONTR        = Enum.Font.GothamMedium,
+}
+
+-- ══════════════════════════════════════════════════════════════
+--  HELPERS DE CONSTRUÇÃO DE UI
+-- ══════════════════════════════════════════════════════════════
+local UI = {}
+
+local function mk(class, props, parent)
+    local o = Instance.new(class)
+    if props then for k, v in pairs(props) do o[k] = v end end
+    if parent then o.Parent = parent end
+    return o
+end
+
+local function corner(inst, r)
+    return mk("UICorner", { CornerRadius = UDim.new(0, r or 10) }, inst)
+end
+
+local function stroke(inst, color, thick, trans)
+    return mk("UIStroke", {
+        Color           = color or Theme.border,
+        Thickness       = thick or 1,
+        Transparency    = trans or 0.45,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, inst)
+end
+
+local function pad(inst, topBottom, leftRight)
+    return mk("UIPadding", {
+        PaddingTop    = UDim.new(0, topBottom),
+        PaddingBottom = UDim.new(0, topBottom),
+        PaddingLeft   = UDim.new(0, leftRight or topBottom),
+        PaddingRight  = UDim.new(0, leftRight or topBottom),
+    }, inst)
+end
+
+local function hoverify(btn, normalColor, hoverColor)
+    local activeTween
+    local function tweenTo(c)
+        if activeTween then pcall(function() activeTween:Cancel() end) end
+        activeTween = TweenService:Create(btn, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = c
+        })
+        activeTween:Play()
+    end
+    btn.MouseEnter:Connect(function() tweenTo(hoverColor) end)
+    btn.MouseLeave:Connect(function() tweenTo(normalColor) end)
+end
+
+local function shadow(parent, transparency, spread)
+    local amount = spread or 56
+    return mk("ImageLabel", {
+        Name                   = "SoftShadow",
+        Image                  = "rbxassetid://6015897843",
+        ImageColor3            = Color3.fromRGB(0, 0, 0),
+        ImageTransparency      = transparency or 0.36,
+        ScaleType              = Enum.ScaleType.Slice,
+        SliceCenter            = Rect.new(47, 47, 450, 450),
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, amount, 1, amount),
+        Position               = UDim2.fromOffset(-amount / 2, -amount / 2 + 6),
+        ZIndex                 = 0,
+    }, parent)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CRIAÇÃO DO SCREENGUI E JANELA PRINCIPAL
+-- ══════════════════════════════════════════════════════════════
+local function getGuiParent()
+    local ok, hui = pcall(function() return gethui and gethui() end)
+    if ok and hui then return hui end
+    local ok2, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok2 and cg then return cg end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local guiParent = getGuiParent()
+pcall(function()
+    for _, g in ipairs(guiParent:GetChildren()) do
+        if g.Name == "RimuruHub" then g:Destroy() end
+    end
+end)
+
+local ScreenGui = mk("ScreenGui", {
+    Name           = "RimuruHub",
+    ResetOnSpawn   = false,
+    IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder   = 9999,
+}, guiParent)
+
+local WINDOW_SIZE = Vector2.new(840, 560)
+local Root = mk("Frame", {
+    Name                   = "Root",
+    AnchorPoint            = Vector2.new(0.5, 0.5),
+    Size                   = UDim2.fromOffset(WINDOW_SIZE.X, WINDOW_SIZE.Y),
+    Position               = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3       = Theme.bg,
+    BackgroundTransparency = 0.14,
+    BorderSizePixel        = 0,
+    ClipsDescendants       = false,
+    ZIndex                 = 2,
+}, ScreenGui)
+corner(Root, 16)
+shadow(Root, 0.32, 72)
+stroke(Root, Theme.border, 1.2, 0.30)
+
+local RootScale = mk("UIScale", { Name = "ResponsiveScale", Scale = 1 }, Root)
+local function updateResponsiveScale()
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local sx = math.max((viewport.X - 24) / WINDOW_SIZE.X, 0.48)
+    local sy = math.max((viewport.Y - 24) / WINDOW_SIZE.Y, 0.48)
+    RootScale.Scale = math.min(sx, sy, 1)
+end
+updateResponsiveScale()
+if workspace.CurrentCamera then
+    trackConn(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsiveScale))
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  IMAGEM DE FUNDO ÚNICA — ESTÉTICA ANIME EM PRETO E BRANCO
+-- ══════════════════════════════════════════════════════════════
+UI.WallpaperBg = mk("ImageLabel", {
+    Name                   = "AnimeMonochromeBg",
+    Image                  = RESOURCES.BackgroundAnimeBW,
+    ScaleType              = Enum.ScaleType.Crop,
+    BackgroundColor3       = Theme.bg,
+    BackgroundTransparency = 0,
+    ImageColor3            = Color3.fromRGB(210, 210, 215),
+    ImageTransparency      = 0.68,
+    BorderSizePixel        = 0,
+    Size                   = UDim2.fromScale(1, 1),
+    ZIndex                 = 1,
+}, Root)
+corner(UI.WallpaperBg, 16)
+
+UI.WallOverlay = mk("Frame", {
+    Name                   = "ContrastOverlay",
+    BackgroundColor3       = Theme.bg,
+    BackgroundTransparency = 0.24,
+    BorderSizePixel        = 0,
+    Size                   = UDim2.fromScale(1, 1),
+    ZIndex                 = 2,
+}, Root)
+corner(UI.WallOverlay, 16)
+
+task.spawn(function()
+    pcall(function() ContentProvider:PreloadAsync({ UI.WallpaperBg }) end)
+    task.wait(0.3)
+    local ok = false
+    pcall(function() ok = UI.WallpaperBg.IsLoaded end)
+    if not ok then UI.WallpaperBg.Image = RESOURCES.BackgroundFallback end
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  TOP BAR (BARRA SUPERIOR ALINHADA)
+-- ══════════════════════════════════════════════════════════════
+local TopBar = mk("Frame", {
+    Name                   = "TopBar",
+    Size                   = UDim2.new(1, 0, 0, 52),
+    BackgroundColor3       = Theme.bg2,
+    BackgroundTransparency = 0.20,
+    BorderSizePixel        = 0,
+    ZIndex                 = 5,
+}, Root)
+corner(TopBar, 16)
+
+mk("Frame", {
+    Size                   = UDim2.new(1, -28, 0, 1),
+    Position               = UDim2.new(0, 14, 1, -1),
+    BackgroundColor3       = Theme.border,
+    BackgroundTransparency = 0.55,
+    BorderSizePixel        = 0,
+    ZIndex                 = 6,
+}, TopBar)
+
+local function topBarButton(txt, pos, textColor, w)
+    local b = mk("TextButton", {
+        Text                   = txt,
+        Size                   = UDim2.fromOffset(w or 30, 30),
+        Position               = pos,
+        BackgroundColor3       = Theme.panel,
+        BackgroundTransparency = 0.15,
+        AutoButtonColor        = false,
+        Font                   = Theme.FONT,
+        TextSize               = 12,
+        TextColor3             = textColor or Theme.text,
+        BorderSizePixel        = 0,
+        ZIndex                 = 6,
+    }, TopBar)
+    corner(b, 8)
+    stroke(b, Theme.border, 1, 0.45)
+    hoverify(b, Theme.panel, Theme.panelHover)
+    return b
+end
+
+UI.helpBtn = topBarButton("?",  UDim2.fromOffset(14, 11), Theme.sub, 30)
+UI.langBtn = topBarButton("🌐", UDim2.fromOffset(50, 11), Theme.sub, 30)
+
+local TitleHolder = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.fromOffset(400, 40),
+    Position               = UDim2.new(0.5, -200, 0, 6),
+    ZIndex                 = 6,
+}, TopBar)
+
+mk("TextLabel", {
+    Text                   = BRAND.title .. "  //  " .. BRAND.subtitle,
+    Font                   = Theme.FONTB,
+    TextSize               = 16,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 22),
+    Position               = UDim2.fromOffset(0, 0),
+    TextColor3             = Theme.text,
+    ZIndex                 = 6,
+}, TitleHolder)
+
+mk("TextLabel", {
+    Text                   = BRAND.author .. "   •   v" .. BRAND.version .. "   •   " .. BRAND.codename,
+    Font                   = Theme.FONTR,
+    TextSize               = 10,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 14),
+    Position               = UDim2.fromOffset(0, 22),
+    TextColor3             = Theme.sub,
+    ZIndex                 = 6,
+}, TitleHolder)
+
+local MinBtn   = topBarButton("—", UDim2.new(1, -80, 0, 11), Theme.sub, 30)
+local CloseBtn = topBarButton("✕", UDim2.new(1, -44, 0, 11), Theme.danger, 30)
+
+-- ══════════════════════════════════════════════════════════════
+--  CORPO DA INTERFACE (3 COLUNAS PROPORCIONAIS)
+-- ══════════════════════════════════════════════════════════════
+local Body = mk("Frame", {
+    Name                   = "Body",
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -28, 1, -124),
+    Position               = UDim2.fromOffset(14, 60),
+    ZIndex                 = 3,
+}, Root)
+
+local function makePanel(name, size, pos, parent)
+    local p = mk("Frame", {
+        Name                   = name,
+        Size                   = size,
+        Position               = pos,
+        BackgroundColor3       = Theme.panel,
+        BackgroundTransparency = 0.26,
+        BorderSizePixel        = 0,
+        ZIndex                 = 3,
+    }, parent or Body)
+    corner(p, 12)
+    stroke(p, Theme.border, 1, 0.45)
+    return p
+end
+
+-- ───────────── COLUNA 1: SIDEBAR DE CATEGORIAS (176px) ─────────────
+local SideBar = makePanel("SideBar", UDim2.new(0, 176, 1, 0), UDim2.fromOffset(0, 0))
+
+mk("TextLabel", {
+    Text                   = "CATEGORIAS",
+    Font                   = Theme.FONT,
+    TextSize               = 11,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -20, 0, 24),
+    Position               = UDim2.fromOffset(12, 8),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    ZIndex                 = 4,
+}, SideBar)
+
+local CatScroll = mk("ScrollingFrame", {
+    Size                   = UDim2.new(1, -16, 1, -42),
+    Position               = UDim2.fromOffset(8, 34),
+    BackgroundTransparency = 1,
+    BorderSizePixel        = 0,
+    ScrollBarThickness     = 2,
+    ScrollBarImageColor3   = Theme.borderActive,
+    CanvasSize             = UDim2.fromOffset(0, 0),
+    AutomaticCanvasSize    = Enum.AutomaticSize.Y,
+    ZIndex                 = 4,
+}, SideBar)
+mk("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, CatScroll)
+
+local activeCategory = nil
+
+-- ───────────── COLUNA 2: BUSCA E LISTA DE MÚSICAS MIDI 2 ─────────────
+local Center = mk("Frame", {
+    Name                   = "CenterColumn",
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -176 - 248 - 24, 1, 0),
+    Position               = UDim2.fromOffset(188, 0),
+    ZIndex                 = 3,
+}, Body)
+
+local SearchBox = mk("TextBox", {
+    PlaceholderText        = "Buscar música no catálogo MIDI 2...",
+    Text                   = "",
+    Size                   = UDim2.new(1, -42, 0, 36),
+    Position               = UDim2.fromOffset(0, 0),
+    BackgroundColor3       = Theme.panel,
+    BackgroundTransparency = 0.22,
+    Font                   = Theme.FONTR,
+    TextSize               = 12,
+    TextColor3             = Theme.text,
+    PlaceholderColor3      = Theme.muted,
+    BorderSizePixel        = 0,
+    ClearTextOnFocus       = false,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    ZIndex                 = 4,
+}, Center)
+corner(SearchBox, 10)
+stroke(SearchBox, Theme.border, 1, 0.45)
+pad(SearchBox, 0, 12)
+
+local CustomBtn = mk("TextButton", {
+    Text                   = "+",
+    Size                   = UDim2.fromOffset(36, 36),
+    Position               = UDim2.new(1, -36, 0, 0),
+    BackgroundColor3       = Theme.panel2,
+    BackgroundTransparency = 0.15,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONTB,
+    TextSize               = 18,
+    TextColor3             = Theme.text,
+    BorderSizePixel        = 0,
+    ZIndex                 = 4,
+}, Center)
+corner(CustomBtn, 10)
+stroke(CustomBtn, Theme.border, 1, 0.40)
+hoverify(CustomBtn, Theme.panel2, Theme.panelHover)
+
+local ShuffleBtn = mk("TextButton", {
+    Text                   = "SHUFFLE PLAY",
+    Size                   = UDim2.new(0.5, -4, 0, 34),
+    Position               = UDim2.fromOffset(0, 44),
+    BackgroundColor3       = Theme.panel2,
+    BackgroundTransparency = 0.20,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONT,
+    TextSize               = 11,
+    TextColor3             = Theme.text,
+    BorderSizePixel        = 0,
+    ZIndex                 = 4,
+}, Center)
+corner(ShuffleBtn, 9)
+stroke(ShuffleBtn, Theme.border, 1, 0.42)
+hoverify(ShuffleBtn, Theme.panel2, Theme.panelHover)
+
+local RandomBtn = mk("TextButton", {
+    Text                   = "RANDOM SONG",
+    Size                   = UDim2.new(0.5, -4, 0, 34),
+    Position               = UDim2.new(0.5, 4, 0, 44),
+    BackgroundColor3       = Theme.panel2,
+    BackgroundTransparency = 0.20,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONT,
+    TextSize               = 11,
+    TextColor3             = Theme.text,
+    BorderSizePixel        = 0,
+    ZIndex                 = 4,
+}, Center)
+corner(RandomBtn, 9)
+stroke(RandomBtn, Theme.border, 1, 0.42)
+hoverify(RandomBtn, Theme.panel2, Theme.panelHover)
+
+local ListPanel = makePanel("ListPanel", UDim2.new(1, 0, 1, -86), UDim2.fromOffset(0, 86), Center)
+
+UI.listInfo = mk("TextLabel", {
+    Text                   = "",
+    Font                   = Theme.FONTR,
+    TextSize               = 11,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -20, 0, 20),
+    Position               = UDim2.fromOffset(10, 6),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    ZIndex                 = 4,
+}, ListPanel)
+
+local SongScroll = mk("ScrollingFrame", {
+    Size                   = UDim2.new(1, -14, 1, -34),
+    Position               = UDim2.fromOffset(7, 28),
+    BackgroundTransparency = 1,
+    BorderSizePixel        = 0,
+    ScrollBarThickness     = 3,
+    ScrollBarImageColor3   = Theme.borderActive,
+    CanvasSize             = UDim2.fromOffset(0, 0),
+    AutomaticCanvasSize    = Enum.AutomaticSize.Y,
+    ZIndex                 = 4,
+}, ListPanel)
+mk("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, SongScroll)
+
+-- ───────────── COLUNA 3: PAINEL DIREITO + LILGUI & MÓDULOS TALENTLESS (248px) ─────────────
+local Right = makePanel("RightPanel", UDim2.new(0, 248, 1, 0), UDim2.new(1, -248, 0, 0))
+pad(Right, 10, 10)
+mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, Right)
+
+-- 1. Card "Tocando Agora"
+local NowPlayingCard = mk("Frame", {
+    Name                   = "NowPlayingCard",
+    Size                   = UDim2.new(1, 0, 0, 96),
+    BackgroundColor3       = Theme.bg2,
+    BackgroundTransparency = 0.22,
+    BorderSizePixel        = 0,
+    ClipsDescendants       = true,
+    LayoutOrder            = 1,
+    ZIndex                 = 4,
+}, Right)
+corner(NowPlayingCard, 10)
+stroke(NowPlayingCard, Theme.border, 1, 0.40)
+
+mk("TextLabel", {
+    Text                   = "TOCANDO AGORA",
+    Font                   = Theme.FONT,
+    TextSize               = 10,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -20, 0, 14),
+    Position               = UDim2.fromOffset(10, 8),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    ZIndex                 = 5,
+}, NowPlayingCard)
+
+UI.songName = mk("TextLabel", {
+    Text                   = "—",
+    Font                   = Theme.FONTB,
+    TextSize               = 13,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -20, 0, 34),
+    Position               = UDim2.fromOffset(10, 24),
+    TextColor3             = Theme.text,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    TextYAlignment         = Enum.TextYAlignment.Top,
+    TextWrapped            = true,
+    TextTruncate           = Enum.TextTruncate.AtEnd,
+    ZIndex                 = 5,
+}, NowPlayingCard)
+
+mk("Frame", {
+    Size                   = UDim2.new(1, -20, 0, 1),
+    Position               = UDim2.fromOffset(10, 64),
+    BackgroundColor3       = Theme.border,
+    BackgroundTransparency = 0.55,
+    BorderSizePixel        = 0,
+    ZIndex                 = 5,
+}, NowPlayingCard)
+
+UI.bpmLabel = mk("TextLabel", {
+    Text                   = "BPM —   •   MIDI 2",
+    Font                   = Theme.FONTR,
+    TextSize               = 10,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -20, 0, 16),
+    Position               = UDim2.fromOffset(10, 72),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    ZIndex                 = 5,
+}, NowPlayingCard)
+
+-- 2. Botão Principal: Tocar / Pausar
+local PlayBtn = mk("TextButton", {
+    Text             = "▶  TOCAR MÚSICA",
+    Size             = UDim2.new(1, 0, 0, 36),
+    BackgroundColor3 = Theme.accent,
+    AutoButtonColor  = false,
+    Font             = Theme.FONTB,
+    TextSize         = 12,
+    TextColor3       = Theme.accentDark,
+    BorderSizePixel  = 0,
+    LayoutOrder      = 2,
+    ZIndex           = 4,
+}, Right)
+corner(PlayBtn, 9)
+hoverify(PlayBtn, Theme.accent, Color3.fromRGB(255, 255, 255))
+
+-- 3. Linha de Fila e Favorito
+local IconRow = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 28),
+    LayoutOrder            = 3,
+    ZIndex                 = 4,
+}, Right)
+
+local QueueBtn = mk("TextButton", {
+    Text                   = "+ Fila",
+    Size                   = UDim2.new(0.5, -3, 1, 0),
+    Position               = UDim2.fromOffset(0, 0),
+    BackgroundColor3       = Theme.panel2,
+    BackgroundTransparency = 0.15,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONT,
+    TextSize               = 11,
+    TextColor3             = Theme.text,
+    BorderSizePixel        = 0,
+    ZIndex                 = 4,
+}, IconRow)
+corner(QueueBtn, 7)
+stroke(QueueBtn, Theme.border, 1, 0.45)
+hoverify(QueueBtn, Theme.panel2, Theme.panelHover)
+
+UI.favBtn = mk("TextButton", {
+    Text                   = "☆ Fav",
+    Size                   = UDim2.new(0.5, -3, 1, 0),
+    Position               = UDim2.new(0.5, 3, 0, 0),
+    BackgroundColor3       = Theme.panel2,
+    BackgroundTransparency = 0.15,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONT,
+    TextSize               = 11,
+    TextColor3             = Theme.sub,
+    BorderSizePixel        = 0,
+    ZIndex                 = 4,
+}, IconRow)
+corner(UI.favBtn, 7)
+stroke(UI.favBtn, Theme.border, 1, 0.45)
+hoverify(UI.favBtn, Theme.panel2, Theme.panelHover)
+
+-- 4. CONTROLES LILGUI (upbpm/downbpm ±10 BPM, ErrorMargin ±0.005s, Transpose ±1 Oct)
+mk("TextLabel", {
+    Text                   = "CONTROLES LILGUI (BPM / ERRO / TOM)",
+    Font                   = Theme.FONT,
+    TextSize               = 9,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 13),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    LayoutOrder            = 4,
+    ZIndex                 = 4,
+}, Right)
+
+local LilGuiBox = mk("Frame", {
+    Size                   = UDim2.new(1, 0, 0, 62),
+    BackgroundColor3       = Theme.bg2,
+    BackgroundTransparency = 0.25,
+    BorderSizePixel        = 0,
+    LayoutOrder            = 5,
+    ZIndex                 = 4,
+}, Right)
+corner(LilGuiBox, 9)
+stroke(LilGuiBox, Theme.border, 1, 0.48)
+
+-- Linha 1 do lilgui: -10 BPM | BPM Display | +10 BPM
+local DownBpmBtn = mk("TextButton", {
+    Text = "-10 BPM", Size = UDim2.fromOffset(62, 24), Position = UDim2.fromOffset(6, 5),
+    BackgroundColor3 = Theme.panel2, AutoButtonColor = false, Font = Theme.FONT, TextSize = 10,
+    TextColor3 = Theme.text, BorderSizePixel = 0, ZIndex = 5,
+}, LilGuiBox)
+corner(DownBpmBtn, 6); stroke(DownBpmBtn, Theme.border, 1, 0.5)
+
+UI.lilBpmText = mk("TextLabel", {
+    Text = "BPM: 120", Size = UDim2.new(1, -140, 0, 24), Position = UDim2.fromOffset(70, 5),
+    BackgroundTransparency = 1, Font = Theme.FONTB, TextSize = 11, TextColor3 = Theme.text, ZIndex = 5,
+}, LilGuiBox)
+
+local UpBpmBtn = mk("TextButton", {
+    Text = "+10 BPM", Size = UDim2.fromOffset(62, 24), Position = UDim2.new(1, -68, 0, 5),
+    BackgroundColor3 = Theme.panel2, AutoButtonColor = false, Font = Theme.FONT, TextSize = 10,
+    TextColor3 = Theme.text, BorderSizePixel = 0, ZIndex = 5,
+}, LilGuiBox)
+corner(UpBpmBtn, 6); stroke(UpBpmBtn, Theme.border, 1, 0.5)
+
+-- Linha 2 do lilgui: -Erro | ErrorMargin Display | +Erro | Tom
+local LessErrBtn = mk("TextButton", {
+    Text = "-Erro", Size = UDim2.fromOffset(44, 24), Position = UDim2.fromOffset(6, 33),
+    BackgroundColor3 = Theme.panel2, AutoButtonColor = false, Font = Theme.FONT, TextSize = 10,
+    TextColor3 = Theme.sub, BorderSizePixel = 0, ZIndex = 5,
+}, LilGuiBox)
+corner(LessErrBtn, 6); stroke(LessErrBtn, Theme.border, 1, 0.5)
+
+UI.lilErrText = mk("TextLabel", {
+    Text = "Err: 0.000s", Size = UDim2.fromOffset(74, 24), Position = UDim2.fromOffset(52, 33),
+    BackgroundTransparency = 1, Font = Theme.FONTR, TextSize = 10, TextColor3 = Theme.sub, ZIndex = 5,
+}, LilGuiBox)
+
+local MoreErrBtn = mk("TextButton", {
+    Text = "+Erro", Size = UDim2.fromOffset(44, 24), Position = UDim2.fromOffset(128, 33),
+    BackgroundColor3 = Theme.panel2, AutoButtonColor = false, Font = Theme.FONT, TextSize = 10,
+    TextColor3 = Theme.sub, BorderSizePixel = 0, ZIndex = 5,
+}, LilGuiBox)
+corner(MoreErrBtn, 6); stroke(MoreErrBtn, Theme.border, 1, 0.5)
+
+UI.transposeBtn = mk("TextButton", {
+    Text = "Tom: 0", Size = UDim2.fromOffset(48, 24), Position = UDim2.new(1, -54, 0, 33),
+    BackgroundColor3 = Theme.panel2, AutoButtonColor = false, Font = Theme.FONT, TextSize = 10,
+    TextColor3 = Theme.text, BorderSizePixel = 0, ZIndex = 5,
+}, LilGuiBox)
+corner(UI.transposeBtn, 6); stroke(UI.transposeBtn, Theme.border, 1, 0.5)
+
+-- 5. Seção de Velocidade
+mk("TextLabel", {
+    Text                   = "VELOCIDADE & MODO",
+    Font                   = Theme.FONT,
+    TextSize               = 9,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 13),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    LayoutOrder            = 6,
+    ZIndex                 = 4,
+}, Right)
+
+local SpeedRow = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 26),
+    LayoutOrder            = 7,
+    ZIndex                 = 4,
+}, Right)
+mk("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding       = UDim.new(0, 4),
+    SortOrder     = Enum.SortOrder.LayoutOrder,
+}, SpeedRow)
+
+UI.speedBtns = {}
+local function updateSpeedVisuals()
+    for m, bb in pairs(UI.speedBtns) do
+        local on = (m == State.mode)
+        bb.BackgroundColor3 = on and Theme.accent or Theme.panel2
+        bb.TextColor3       = on and Theme.accentDark or Theme.sub
+    end
+end
+
+local function makeSpeedBtn(label, mode, order)
+    local b = mk("TextButton", {
+        Text                   = label,
+        Size                   = UDim2.new(0.25, -3, 1, 0),
+        BackgroundColor3       = Theme.panel2,
+        BackgroundTransparency = 0.15,
+        AutoButtonColor        = false,
+        Font                   = Theme.FONT,
+        TextSize               = 10,
+        TextColor3             = Theme.sub,
+        BorderSizePixel        = 0,
+        LayoutOrder            = order,
+        ZIndex                 = 4,
+    }, SpeedRow)
+    corner(b, 7)
+    stroke(b, Theme.border, 1, 0.45)
+    b.MouseButton1Click:Connect(function()
+        State.mode = mode
+        updateSpeedVisuals()
+    end)
+    UI.speedBtns[mode] = b
+    return b
+end
+makeSpeedBtn("Normal", "Normal", 1)
+makeSpeedBtn("Night+", "Nightcore", 2)
+makeSpeedBtn("Turbo",  "Turbo", 3)
+makeSpeedBtn("Slow",   "Slowed", 4)
+updateSpeedVisuals()
+
+-- 6. Módulos TALENTLESS (Loop, Auto, Dueto, Spoofer, Config)
+mk("TextLabel", {
+    Text                   = "MÓDULOS TALENTLESS",
+    Font                   = Theme.FONT,
+    TextSize               = 9,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 13),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    LayoutOrder            = 8,
+    ZIndex                 = 4,
+}, Right)
+
+local TglRow1 = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 26),
+    LayoutOrder            = 9,
+    ZIndex                 = 4,
+}, Right)
+mk("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding       = UDim.new(0, 4),
+    SortOrder     = Enum.SortOrder.LayoutOrder,
+}, TglRow1)
+
+local TglRow2 = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, 0, 0, 26),
+    LayoutOrder            = 10,
+    ZIndex                 = 4,
+}, Right)
+mk("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding       = UDim.new(0, 4),
+    SortOrder     = Enum.SortOrder.LayoutOrder,
+}, TglRow2)
+
+local function makeToggle(parentRow, widthScale, label, getf, setf, order)
+    local b = mk("TextButton", {
+        Text                   = label,
+        Size                   = UDim2.new(widthScale, -3, 1, 0),
+        BackgroundColor3       = Theme.panel2,
+        BackgroundTransparency = 0.15,
+        AutoButtonColor        = false,
+        Font                   = Theme.FONT,
+        TextSize               = 10,
+        TextColor3             = Theme.sub,
+        BorderSizePixel        = 0,
+        LayoutOrder            = order,
+        ZIndex                 = 4,
+    }, parentRow)
+    corner(b, 7)
+    stroke(b, Theme.border, 1, 0.45)
+    local function refresh()
+        local on = getf()
+        b.BackgroundColor3 = on and Theme.accent or Theme.panel2
+        b.TextColor3       = on and Theme.accentDark or Theme.sub
+    end
+    b.MouseButton1Click:Connect(function()
+        setf(not getf())
+        refresh()
+    end)
+    refresh()
+    return b, refresh
+end
+
+local _, refreshLoopBtn = makeToggle(TglRow1, 0.333, "Loop",
+    function() return State.loopEnabled end,
+    function(v) State.loopEnabled = v; if v then State.autoNext = true end end, 1)
+
+local _, refreshAutoBtn = makeToggle(TglRow1, 0.333, "Auto",
+    function() return State.shuffleEnabled end,
+    function(v) State.shuffleEnabled = v; if v then State.autoNext = true end end, 2)
+
+local _, refreshCfgBtn = makeToggle(TglRow1, 0.333, "Config",
+    function() return UI.settingsOpen == true end,
+    function(v)
+        UI.settingsOpen = v
+        if UI.toggleSettings then UI.toggleSettings(v) end
+    end, 3)
+
+local _, refreshDuetBtn = makeToggle(TglRow2, 0.5, "Dueto",
+    function() return UI.duetOpen == true end,
+    function(v)
+        UI.duetOpen = v
+        if UI.duetModal then UI.duetModal.Visible = v end
+    end, 1)
+
+local _, refreshSpoofBtn = makeToggle(TglRow2, 0.5, "Spoofer",
+    function() return UI.spoofOpen == true end,
+    function(v)
+        UI.spoofOpen = v
+        if UI.spoofModal then UI.spoofModal.Visible = v end
+    end, 2)
+
+-- ══════════════════════════════════════════════════════════════
+--  BOTTOM BAR (BARRA DE PROGRESSO INTERATIVA / SCRUBBING + TRANSPORTE)
+-- ══════════════════════════════════════════════════════════════
+local Bottom = mk("Frame", {
+    Name                   = "BottomBar",
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -28, 0, 46),
+    Position               = UDim2.new(0, 14, 1, -54),
+    ZIndex                 = 5,
+}, Root)
+
+UI.nowText = mk("TextLabel", {
+    Text                   = "Pronto.",
+    Font                   = Theme.FONTR,
+    TextSize               = 11,
+    BackgroundTransparency = 1,
+    Size                   = UDim2.new(1, -184, 0, 16),
+    Position               = UDim2.fromOffset(0, 4),
+    TextColor3             = Theme.sub,
+    TextXAlignment         = Enum.TextXAlignment.Left,
+    TextTruncate           = Enum.TextTruncate.AtEnd,
+    ZIndex                 = 6,
+}, Bottom)
+
+-- Hitbox de Scrubbing (Playhead Seek do loader_main.lua)
+local ProgHitbox = mk("TextButton", {
+    Text                   = "",
+    BackgroundTransparency = 1,
+    AutoButtonColor        = false,
+    Size                   = UDim2.new(1, -184, 0, 18),
+    Position               = UDim2.fromOffset(0, 20),
+    ZIndex                 = 7,
+}, Bottom)
+
+local ProgBg = mk("Frame", {
+    AnchorPoint            = Vector2.new(0, 0.5),
+    Size                   = UDim2.new(1, 0, 0, 6),
+    Position               = UDim2.fromScale(0, 0.5),
+    BackgroundColor3       = Theme.panel,
+    BackgroundTransparency = 0.15,
+    BorderSizePixel        = 0,
+    ZIndex                 = 6,
+}, ProgHitbox)
+corner(ProgBg, 3)
+stroke(ProgBg, Theme.border, 1, 0.55)
+
+UI.progFill = mk("Frame", {
+    Size             = UDim2.fromScale(0, 1),
+    BackgroundColor3 = Theme.accent,
+    BorderSizePixel  = 0,
+    ZIndex           = 7,
+}, ProgBg)
+corner(UI.progFill, 3)
+
+local seekingBar = false
+local function updateSeekFromInput(px)
+    local absX = ProgBg.AbsolutePosition.X
+    local absW = math.max(1, ProgBg.AbsoluteSize.X)
+    local rel  = math.clamp((px - absX) / absW, 0, 1)
+    State.progress   = rel
+    State.seekTarget = rel
+    UI.progFill.Size = UDim2.fromScale(rel, 1)
+    if not State.isPlaying then
+        startPlayback()
+        State.seekTarget = rel
+    end
+end
+
+ProgHitbox.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        seekingBar = true
+        updateSeekFromInput(i.Position.X)
+    end
+end)
+
+local TransRow = mk("Frame", {
+    BackgroundTransparency = 1,
+    Size                   = UDim2.fromOffset(170, 36),
+    Position               = UDim2.new(1, -170, 0, 5),
+    ZIndex                 = 6,
+}, Bottom)
+mk("UIListLayout", {
+    FillDirection       = Enum.FillDirection.Horizontal,
+    Padding             = UDim.new(0, 6),
+    HorizontalAlignment = Enum.HorizontalAlignment.Right,
+    VerticalAlignment   = Enum.VerticalAlignment.Center,
+    SortOrder           = Enum.SortOrder.LayoutOrder,
+}, TransRow)
+
+local function transBtn(txt, color, order)
+    local b = mk("TextButton", {
+        Text                   = txt,
+        Size                   = UDim2.fromOffset(38, 34),
+        BackgroundColor3       = Theme.panel2,
+        BackgroundTransparency = 0.15,
+        AutoButtonColor        = false,
+        Font                   = Theme.FONTB,
+        TextSize               = 14,
+        TextColor3             = color or Theme.text,
+        BorderSizePixel        = 0,
+        LayoutOrder            = order,
+        ZIndex                 = 6,
+    }, TransRow)
+    corner(b, 8)
+    stroke(b, Theme.border, 1, 0.42)
+    hoverify(b, Theme.panel2, Theme.panelHover)
+    return b
+end
+
+local PrevBtn   = transBtn("⏮", Theme.text, 1)
+UI.playPauseBtn = transBtn("⏯", Theme.accent, 2)
+local StopBtn   = transBtn("⏹", Theme.danger, 3)
+local NextBtn   = transBtn("⏭", Theme.text, 4)
+
+-- ══════════════════════════════════════════════════════════════
+--  NOTIFICAÇÃO DISCRETA (notif_lib.lua)
+-- ══════════════════════════════════════════════════════════════
+local function notify(text)
+    if _G.talentlessSettings and _G.talentlessSettings.disablenotifs then return end
+    local t = mk("TextLabel", {
+        Text                   = "  " .. tostring(text) .. "  ",
+        Font                   = Theme.FONT,
+        TextSize               = 12,
+        TextColor3             = Theme.text,
+        BackgroundColor3       = Theme.panel2,
+        BackgroundTransparency = 0.08,
+        Size                   = UDim2.fromOffset(16, 32),
+        AutomaticSize          = Enum.AutomaticSize.X,
+        Position               = UDim2.new(0.5, 0, 0, -45),
+        AnchorPoint            = Vector2.new(0.5, 0),
+        BorderSizePixel        = 0,
+        ZIndex                 = 60,
+    }, ScreenGui)
+    corner(t, 8)
+    pad(t, 6, 12)
+    stroke(t, Theme.borderActive, 1, 0.35)
+    TweenService:Create(t, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, 0, 0, 16)
+    }):Play()
+    task.delay(2.0, function()
+        pcall(function()
+            TweenService:Create(t, TweenInfo.new(0.22, Enum.EasingStyle.Quad), {
+                Position               = UDim2.new(0.5, 0, 0, -45),
+                TextTransparency       = 1,
+                BackgroundTransparency = 1,
+            }):Play()
+        end)
+        task.delay(0.25, function() pcall(function() t:Destroy() end) end)
+    end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  ATUALIZAÇÃO DE INTERFACE E LILGUI CONTROLS
+-- ══════════════════════════════════════════════════════════════
+local function curSong() return Songs[State.currentSong] end
+local function isFav(idx) return State.favorites[tostring(idx)] == true end
+local function toggleFav(idx)
+    local k = tostring(idx)
+    if State.favorites[k] then State.favorites[k] = nil else State.favorites[k] = true end
+    saveData()
+end
+
+local function updateLilGuiText()
+    local s = curSong()
+    local activeBpm = getActiveSongBPM(s)
+    if UI.lilBpmText then
+        local offStr = (State.bpmOffset ~= 0) and string.format(" (%+d)", State.bpmOffset) or ""
+        UI.lilBpmText.Text = "BPM: " .. tostring(activeBpm) .. offStr
+    end
+    if UI.lilErrText then
+        UI.lilErrText.Text = string.format("Err: %.3fs", Config.ErrorMargin or 0)
+    end
+end
+
+refreshNowPlaying = function()
+    local s = curSong()
+    if not s then
+        UI.songName.Text = "Nenhuma música carregada"
+        UI.bpmLabel.Text = "Verifique a conexão ou adicione no botão +"
+        return
+    end
+    if not s._prepared then prepareSong(s) end
+    UI.songName.Text = s.name
+    local bpmShow = getActiveSongBPM(s)
+    local fmtTag = s._midi2lua_native and "MIDI 2 Native" or "MIDI 2 Grid"
+    UI.bpmLabel.Text = string.format("BPM %s   •   %s   •   #%d/%d", tostring(bpmShow), fmtTag, State.currentSong, #Songs)
+
+    local fav = isFav(State.currentSong)
+    UI.favBtn.Text = fav and "★ Fav" or "☆ Fav"
+    UI.favBtn.TextColor3 = fav and Theme.text or Theme.sub
+
+    updateLilGuiText()
+    if refreshLoopBtn then refreshLoopBtn() end
+    if refreshAutoBtn then refreshAutoBtn() end
+end
+
+-- Handlers do lilgui (upbpm / downbpm / more / less / transpose)
+DownBpmBtn.MouseButton1Click:Connect(function()
+    State.bpmOffset = (State.bpmOffset or 0) - 10
+    refreshNowPlaying()
+end)
+
+UpBpmBtn.MouseButton1Click:Connect(function()
+    State.bpmOffset = (State.bpmOffset or 0) + 10
+    refreshNowPlaying()
+end)
+
+LessErrBtn.MouseButton1Click:Connect(function()
+    Config.ErrorMargin = math.clamp(math.floor(((Config.ErrorMargin or 0) - 0.005) * 1000 + 0.5) / 1000, 0, 0.050)
+    saveSettings()
+    updateLilGuiText()
+end)
+
+MoreErrBtn.MouseButton1Click:Connect(function()
+    Config.ErrorMargin = math.clamp(math.floor(((Config.ErrorMargin or 0) + 0.005) * 1000 + 0.5) / 1000, 0, 0.050)
+    saveSettings()
+    updateLilGuiText()
+end)
+
+UI.transposeBtn.MouseButton1Click:Connect(function()
+    local nextOct = (Config.TransposeOctave or 0) + 1
+    if nextOct > 2 then nextOct = -2 end
+    Config.TransposeOctave = nextOct
+    local sign = (nextOct > 0) and ("+" .. tostring(nextOct)) or tostring(nextOct)
+    UI.transposeBtn.Text = "Tom: " .. sign
+    notify("Transposição de Oitava: " .. sign)
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  LISTA DE MÚSICAS E CATEGORIAS
+-- ══════════════════════════════════════════════════════════════
+local MAX_LIST = 75
+
+local function buildFilteredIndices()
+    local out = {}
+    local q = string.lower(SearchBox.Text or "")
+    local function passSearch(s)
+        if q == "" then return true end
+        return (string.find(string.lower(s.name or ""), q, 1, true) ~= nil)
+            or (string.find(string.lower(s.category or ""), q, 1, true) ~= nil)
+    end
+
+    if activeCategory == "★ Favoritos" then
+        for i = 1, #Songs do
+            local s = Songs[i]
+            if s and isFav(i) and passSearch(s) then out[#out + 1] = i end
+        end
+    elseif activeCategory == "Custom" then
+        for i = 1, #Songs do
+            local s = Songs[i]
+            if s and s.custom and passSearch(s) then out[#out + 1] = i end
+        end
+    else
+        for _, i in ipairs(PlayableIdx) do
+            local s = Songs[i]
+            if s and (activeCategory == nil or s.category == activeCategory) and passSearch(s) then
+                out[#out + 1] = i
+            end
+        end
+    end
+    return out
+end
+
+refreshList = function()
+    for _, c in ipairs(SongScroll:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    local idxs = buildFilteredIndices()
+    local total = #idxs
+    UI.listInfo.Text = (tr("songs")):format(total) .. (total > MAX_LIST and (tr("showing")):format(MAX_LIST) or "")
+
+    for n = 1, math.min(total, MAX_LIST) do
+        local i = idxs[n]
+        local s = Songs[i]
+        local isCurrent = (i == State.currentSong)
+        local row = mk("TextButton", {
+            Text                   = "",
+            Size                   = UDim2.new(1, -6, 0, 36),
+            BackgroundColor3       = isCurrent and Theme.panelHover or Theme.panel2,
+            BackgroundTransparency = isCurrent and 0.08 or 0.24,
+            AutoButtonColor        = false,
+            BorderSizePixel        = 0,
+            LayoutOrder            = n,
+            ZIndex                 = 4,
+        }, SongScroll)
+        corner(row, 8)
+        stroke(row, isCurrent and Theme.borderActive or Theme.border, 1, isCurrent and 0.20 or 0.55)
+
+        if isCurrent then
+            local rail = mk("Frame", {
+                Size             = UDim2.fromOffset(3, 18),
+                Position         = UDim2.fromOffset(4, 9),
+                BackgroundColor3 = Theme.accent,
+                BorderSizePixel  = 0,
+                ZIndex           = 5,
+            }, row)
+            corner(rail, 2)
+        end
+
+        hoverify(row, isCurrent and Theme.panelHover or Theme.panel2, Theme.panelHover)
+
+        mk("TextLabel", {
+            Text                   = s.name,
+            Font                   = isCurrent and Theme.FONT or Theme.FONTR,
+            TextSize               = 12,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, -86, 1, 0),
+            Position               = UDim2.fromOffset(12, 0),
+            TextColor3             = isCurrent and Theme.text or Theme.sub,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            TextTruncate           = Enum.TextTruncate.AtEnd,
+            ZIndex                 = 5,
+        }, row)
+
+        local bpmVal = s._play_bpm or s.bpm or 120
+        mk("TextLabel", {
+            Text                   = tostring(bpmVal) .. " BPM",
+            Font                   = Theme.FONTR,
+            TextSize               = 10,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.fromOffset(52, 36),
+            Position               = UDim2.new(1, -76, 0, 0),
+            TextColor3             = Theme.muted,
+            TextXAlignment         = Enum.TextXAlignment.Right,
+            ZIndex                 = 5,
+        }, row)
+
+        mk("TextLabel", {
+            Text                   = isFav(i) and "★" or "",
+            Font                   = Theme.FONT,
+            TextSize               = 12,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.fromOffset(18, 36),
+            Position               = UDim2.new(1, -22, 0, 0),
+            TextColor3             = Theme.text,
+            ZIndex                 = 5,
+        }, row)
+
+        row.MouseButton1Click:Connect(function()
+            playIndex(i, State.autoNext)
+            refreshNowPlaying()
+            refreshList()
+            notify("▶ " .. s.name)
+        end)
+    end
+end
+
+local function setCategory(cat)
+    activeCategory = cat
+    for _, c in ipairs(CatScroll:GetChildren()) do
+        if c:IsA("TextButton") then
+            local on = (c:GetAttribute("cat") == (cat or "__all__"))
+            c.BackgroundColor3 = on and Theme.accent or Theme.panel2
+            c.TextColor3       = on and Theme.accentDark or Theme.sub
+        end
+    end
+    refreshList()
+end
+
+local function addCatBtn(label, catValue, count, order)
+    local b = mk("TextButton", {
+        Text                   = count and (label .. "  (" .. count .. ")") or label,
+        Size                   = UDim2.new(1, -6, 0, 28),
+        BackgroundColor3       = Theme.panel2,
+        BackgroundTransparency = 0.20,
+        AutoButtonColor        = false,
+        Font                   = Theme.FONT,
+        TextSize               = 11,
+        TextColor3             = Theme.sub,
+        BorderSizePixel        = 0,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        LayoutOrder            = order,
+        ZIndex                 = 4,
+    }, CatScroll)
+    corner(b, 7)
+    stroke(b, Theme.border, 1, 0.50)
+    pad(b, 0, 8)
+    b:SetAttribute("cat", catValue or "__all__")
+    b.MouseButton1Click:Connect(function() setCategory(catValue) end)
+    return b
+end
+
+local function buildCategories()
+    for _, c in ipairs(CatScroll:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
+    end
+    local order = 1
+    addCatBtn(tr("all"), nil, #PlayableIdx, order); order = order + 1
+    addCatBtn(tr("favs"), "★ Favoritos", nil, order); order = order + 1
+
+    local cc = 0
+    for i = 1, #Songs do
+        if Songs[i] and Songs[i].custom then cc = cc + 1 end
+    end
+    addCatBtn(tr("custom"), "Custom", cc, order); order = order + 1
+
+    local sorted = {}
+    for cat, n in pairs(CategoryCount) do
+        sorted[#sorted + 1] = { cat = cat, n = n }
+    end
+    table.sort(sorted, function(a, b) return a.n > b.n end)
+    for _, e in ipairs(sorted) do
+        if e.cat ~= "Custom" then
+            addCatBtn(e.cat, e.cat, e.n, order)
+            order = order + 1
+        end
+    end
+end
+
+local function walkTranslate()
+    local map = trMap()
+    local i = langIdx()
+    for _, o in ipairs(ScreenGui:GetDescendants()) do
+        if o:IsA("TextButton") or o:IsA("TextLabel") then
+            local base = o:GetAttribute("trbase")
+            if not base and map[o.Text] then
+                base = o.Text
+                o:SetAttribute("trbase", base)
+            end
+            if base and map[base] then o.Text = map[base][i] end
+        elseif o:IsA("TextBox") then
+            local base = o:GetAttribute("trbasePH")
+            if not base and map[o.PlaceholderText] then
+                base = o.PlaceholderText
+                o:SetAttribute("trbasePH", base)
+            end
+            if base and map[base] then o.PlaceholderText = map[base][i] end
+        end
+    end
+end
+
+local function applyLang()
+    walkTranslate()
+    buildCategories()
+    setCategory(activeCategory)
+    refreshList()
+    refreshNowPlaying()
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  JANELAS MODAIS DOS MÓDULOS DO TALENTLESS
+-- ══════════════════════════════════════════════════════════════
+local function makeModal(titleText, w, h, onClose)
+    local f = mk("Frame", {
+        Size                   = UDim2.fromOffset(w, h),
+        Position               = UDim2.new(0.5, -w / 2, 0.5, -h / 2),
+        BackgroundColor3       = Theme.bg2,
+        BackgroundTransparency = 0.05,
+        BorderSizePixel        = 0,
+        Visible                = false,
+        ZIndex                 = 30,
+    }, Root)
+    corner(f, 14)
+    shadow(f, 0.28, 56)
+    stroke(f, Theme.borderActive, 1.2, 0.30)
+
+    mk("TextLabel", {
+        Text                   = titleText,
+        Font                   = Theme.FONTB,
+        TextSize               = 13,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -44, 0, 28),
+        Position               = UDim2.fromOffset(14, 10),
+        TextColor3             = Theme.text,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        ZIndex                 = 31,
+    }, f)
+
+    local x = mk("TextButton", {
+        Text             = "✕",
+        Size             = UDim2.fromOffset(26, 26),
+        Position         = UDim2.new(1, -36, 0, 11),
+        BackgroundColor3 = Theme.panel,
+        AutoButtonColor  = false,
+        Font             = Theme.FONTB,
+        TextSize         = 12,
+        TextColor3       = Theme.danger,
+        BorderSizePixel  = 0,
+        ZIndex           = 31,
+    }, f)
+    corner(x, 7)
+    stroke(x, Theme.border, 1, 0.45)
+    x.MouseButton1Click:Connect(function()
+        f.Visible = false
+        if onClose then onClose() end
+    end)
+    return f
+end
+
+-- ───────────── 1. MODAL DE CONFIGURAÇÕES (settings.lua) ─────────────
+UI.settings = makeModal("Configurações (TALENTLESS_settings.txt)", 380, 410, function()
+    UI.settingsOpen = false
+    if refreshCfgBtn then refreshCfgBtn() end
+end)
+
+do
+    local cfgScroll = mk("ScrollingFrame", {
+        Size                   = UDim2.new(1, -20, 1, -52),
+        Position               = UDim2.fromOffset(10, 42),
+        BackgroundTransparency = 1,
+        BorderSizePixel        = 0,
+        ScrollBarThickness     = 3,
+        ScrollBarImageColor3   = Theme.borderActive,
+        CanvasSize             = UDim2.fromOffset(0, 0),
+        AutomaticCanvasSize    = Enum.AutomaticSize.Y,
+        ZIndex                 = 31,
+    }, UI.settings)
+    mk("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, cfgScroll)
+    pad(cfgScroll, 2, 4)
+
+    local order = 1
+    local function sToggle(label, getf, setf)
+        local row = mk("Frame", {
+            BackgroundColor3       = Theme.panel,
+            BackgroundTransparency = 0.25,
+            Size                   = UDim2.new(1, -6, 0, 30),
+            LayoutOrder            = order,
+            ZIndex                 = 31,
+        }, cfgScroll)
+        corner(row, 7)
+        order = order + 1
+
+        mk("TextLabel", {
+            Text                   = label,
+            Font                   = Theme.FONTR,
+            TextSize               = 11,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, -56, 1, 0),
+            Position               = UDim2.fromOffset(10, 0),
+            TextColor3             = Theme.text,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            ZIndex                 = 32,
+        }, row)
+
+        local b = mk("TextButton", {
+            Text             = "",
+            Size             = UDim2.fromOffset(40, 20),
+            Position         = UDim2.new(1, -48, 0.5, -10),
+            BackgroundColor3 = Theme.panel2,
+            BorderSizePixel  = 0,
+            AutoButtonColor  = false,
+            ZIndex           = 32,
+        }, row)
+        corner(b, 10)
+        stroke(b, Theme.border, 1, 0.45)
+
+        local knob = mk("Frame", {
+            Size             = UDim2.fromOffset(14, 14),
+            Position         = UDim2.fromOffset(3, 3),
+            BackgroundColor3 = Theme.sub,
+            BorderSizePixel  = 0,
+            ZIndex           = 33,
+        }, b)
+        corner(knob, 7)
+
+        local function refresh()
+            local on = getf()
+            TweenService:Create(b, TweenInfo.new(0.14), {
+                BackgroundColor3 = on and Theme.accent or Theme.panel2
+            }):Play()
+            TweenService:Create(knob, TweenInfo.new(0.14), {
+                Position         = on and UDim2.fromOffset(23, 3) or UDim2.fromOffset(3, 3),
+                BackgroundColor3 = on and Theme.accentDark or Theme.sub,
+            }):Play()
+        end
+        b.MouseButton1Click:Connect(function()
+            setf(not getf())
+            saveSettings()
+            refresh()
+        end)
+        refresh()
+    end
+
+    -- Todas as flags oficiais de settings.lua do repositório TALENTLESS
+    sToggle("secondaryloader (Precisão Sub-Frame)",
+        function() return Config.SecondaryLoader end,
+        function(v) Config.SecondaryLoader = v end)
+
+    sToggle("shorts (Notas Curtas / Estaccato)",
+        function() return Config.ShortNotesEnabled end,
+        function(v) Config.ShortNotesEnabled = v end)
+
+    sToggle("disableaccidents (100% Precisão / Sem Erros)",
+        function() return Config.DisableAccidents end,
+        function(v) Config.DisableAccidents = v; Config.RandomShiftEnabled = not v end)
+
+    sToggle("disablefeaturedsongs (Ocultar Featured)",
+        function() return Config.DisableFeaturedSongs end,
+        function(v) Config.DisableFeaturedSongs = v; processAndFilterSongs(); buildCategories(); refreshList() end)
+
+    sToggle("mutesfx (Silenciar Áudio de Inicialização)",
+        function() return _G.talentlessSettings.mutesfx == true end,
+        function(v) _G.talentlessSettings.mutesfx = v end)
+
+    sToggle("disablenotifs (Ocultar Notificações Toast)",
+        function() return _G.talentlessSettings.disablenotifs == true end,
+        function(v) _G.talentlessSettings.disablenotifs = v end)
+
+    sToggle("MIDI88 (Suporte 88 Teclas / Ctrl+Tecla)",
+        function() return Config.Midi88Enabled end,
+        function(v) Config.Midi88Enabled = v end)
+
+    sToggle("Modo Mouse (Clicar Teclas na Tela)",
+        function() return Config.MouseClickEnabled end,
+        function(v) Config.MouseClickEnabled = v; MouseMap = nil end)
+
+    sToggle("Auto-Next (Avançar Automaticamente)",
+        function() return State.autoNext end,
+        function(v) State.autoNext = v end)
+
+    local expBtn = mk("TextButton", {
+        Text             = "Exportar Catálogo MIDI 2 (JSON)",
+        Size             = UDim2.new(1, -6, 0, 32),
+        BackgroundColor3 = Theme.panel2,
+        AutoButtonColor  = false,
+        Font             = Theme.FONT,
+        TextSize         = 11,
+        TextColor3       = Theme.text,
+        BorderSizePixel  = 0,
+        LayoutOrder      = 99,
+        ZIndex           = 32,
+    }, cfgScroll)
+    corner(expBtn, 7)
+    stroke(expBtn, Theme.border, 1, 0.40)
+    hoverify(expBtn, Theme.panel2, Theme.panelHover)
+    expBtn.MouseButton1Click:Connect(function()
+        local count = exportRealCatalogJSON()
+        notify(string.format("Catálogo MIDI 2 exportado (%d músicas)!", count))
+    end)
+end
+
+UI.toggleSettings = function(v)
+    UI.settings.Visible = v and true or false
+    if refreshCfgBtn then refreshCfgBtn() end
+end
+
+-- ───────────── 2. MODAL MODO DUETO (testduetloader) ─────────────
+UI.duetModal = makeModal("Modo Dueto Sincronizado (testduetloader)", 360, 265, function()
+    UI.duetOpen = false
+    if refreshDuetBtn then refreshDuetBtn() end
+end)
+
+do
+    mk("TextLabel", {
+        Text                   = "Permite tocar em dueto com outro jogador dividindo as oitavas do piano ou sincronizando o início exato pelo relógio UTC:",
+        Font                   = Theme.FONTR,
+        TextSize               = 11,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -28, 0, 32),
+        Position               = UDim2.fromOffset(14, 42),
+        TextColor3             = Theme.sub,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        TextWrapped            = true,
+        ZIndex                 = 31,
+    }, UI.duetModal)
+
+    local roleBtns = {}
+    local function makeRoleBtn(label, roleKey, y)
+        local b = mk("TextButton", {
+            Text             = label,
+            Size             = UDim2.new(1, -28, 0, 32),
+            Position         = UDim2.fromOffset(14, y),
+            BackgroundColor3 = (State.duetRole == roleKey) and Theme.accent or Theme.panel,
+            AutoButtonColor  = false,
+            Font             = Theme.FONT,
+            TextSize         = 11,
+            TextColor3       = (State.duetRole == roleKey) and Theme.accentDark or Theme.text,
+            BorderSizePixel  = 0,
+            ZIndex           = 31,
+        }, UI.duetModal)
+        corner(b, 8)
+        stroke(b, Theme.border, 1, 0.45)
+        roleBtns[roleKey] = b
+        b.MouseButton1Click:Connect(function()
+            State.duetRole = roleKey
+            for rk, btn in pairs(roleBtns) do
+                local on = (rk == roleKey)
+                btn.BackgroundColor3 = on and Theme.accent or Theme.panel
+                btn.TextColor3       = on and Theme.accentDark or Theme.text
+            end
+            notify("Modo Dueto: " .. label)
+        end)
+    end
+
+    makeRoleBtn("Solo — Tocar Todas as Notas (Padrão)", "Solo", 82)
+    makeRoleBtn("Jogador 1 — Mão Direita (Notas Agudas >= C4)", "Part1_High", 120)
+    makeRoleBtn("Jogador 2 — Mão Esquerda (Notas Graves < C4)", "Part2_Low", 158)
+
+    local syncStartBtn = mk("TextButton", {
+        Text             = "⏱ INICIAR SINCRONIZADO (PRÓXIMO MÚLTIPLO DE 5s UTC)",
+        Size             = UDim2.new(1, -28, 0, 38),
+        Position         = UDim2.fromOffset(14, 204),
+        BackgroundColor3 = Theme.accent,
+        AutoButtonColor  = false,
+        Font             = Theme.FONTB,
+        TextSize         = 11,
+        TextColor3       = Theme.accentDark,
+        BorderSizePixel  = 0,
+        ZIndex           = 31,
+    }, UI.duetModal)
+    corner(syncStartBtn, 8)
+
+    syncStartBtn.MouseButton1Click:Connect(function()
+        if State.duetSyncWaiting then return end
+        stopPlayback()
+        State.duetSyncWaiting = true
+        UI.duetModal.Visible  = false
+        UI.duetOpen           = false
+        if refreshDuetBtn then refreshDuetBtn() end
+
+        task.spawn(function()
+            local nowUtc = os.time()
+            local nextTick = nowUtc + (5 - (nowUtc % 5))
+            if nextTick - nowUtc < 2 then nextTick = nextTick + 5 end
+            notify("Dueto: aguardando sincronia (" .. tostring(nextTick - nowUtc) .. "s)...")
+            while os.time() < nextTick and State.duetSyncWaiting do
+                RunService.Heartbeat:Wait()
+            end
+            if State.duetSyncWaiting then
+                State.duetSyncWaiting = false
+                playIndex(State.currentSong, false)
+                refreshNowPlaying()
+                notify("▶ Dueto sincronizado iniciado!")
+            end
+        end)
+    end)
+end
+
+-- ───────────── 3. MODAL MIDI SPOOFER & MIDI88 (midi_spoof_loader.lua & spooferinfo.lua) ─────────────
+UI.spoofModal = makeModal("MIDI Spoofer & MIDI88 (spooferinfo.lua)", 360, 245, function()
+    UI.spoofOpen = false
+    if refreshSpoofBtn then refreshSpoofBtn() end
+end)
+
+do
+    mk("TextLabel", {
+        Text                   = "Quando o MIDI Spoofer (_G.midiSpoof) está ativo, o motor ignora o limite de teclas LeftAlt de dinâmica (velocity) e habilita o mapeamento completo de 88 teclas (notas MIDI 21 a 108):",
+        Font                   = Theme.FONTR,
+        TextSize               = 11,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -28, 0, 52),
+        Position               = UDim2.fromOffset(14, 44),
+        TextColor3             = Theme.sub,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        TextWrapped            = true,
+        ZIndex                 = 31,
+    }, UI.spoofModal)
+
+    local spoofBtn = mk("TextButton", {
+        Text             = "DESATIVADO — Clique para Ativar _G.midiSpoof",
+        Size             = UDim2.new(1, -28, 0, 38),
+        Position         = UDim2.fromOffset(14, 108),
+        BackgroundColor3 = Theme.panel,
+        AutoButtonColor  = false,
+        Font             = Theme.FONTB,
+        TextSize         = 11,
+        TextColor3       = Theme.text,
+        BorderSizePixel  = 0,
+        ZIndex           = 31,
+    }, UI.spoofModal)
+    corner(spoofBtn, 8)
+    stroke(spoofBtn, Theme.border, 1, 0.45)
+
+    local function refreshSpoofVisual()
+        local on = Config.MidiSpoofEnabled
+        spoofBtn.Text = on and "✓ _G.midiSpoof ATIVO (Bypass de Velocity + MIDI88)" or "DESATIVADO — Clique para Ativar _G.midiSpoof"
+        spoofBtn.BackgroundColor3 = on and Theme.accent or Theme.panel
+        spoofBtn.TextColor3       = on and Theme.accentDark or Theme.text
+    end
+
+    spoofBtn.MouseButton1Click:Connect(function()
+        Config.MidiSpoofEnabled = not Config.MidiSpoofEnabled
+        _G.midiSpoof = Config.MidiSpoofEnabled
+        refreshSpoofVisual()
+        notify(Config.MidiSpoofEnabled and "MIDI Spoofer ativado (_G.midiSpoof = true)" or "MIDI Spoofer desativado")
+    end)
+    refreshSpoofVisual()
+
+    mk("TextLabel", {
+        Text                   = "Mapeamento MIDI88: Notas 21..108 ativas (Ctrl+1..0 para oitavas extremas e velocity direta 0..127).",
+        Font                   = Theme.FONTR,
+        TextSize               = 10,
+        BackgroundTransparency = 1,
+        Size                   = UDim2.new(1, -28, 0, 36),
+        Position               = UDim2.fromOffset(14, 158),
+        TextColor3             = Theme.muted,
+        TextXAlignment         = Enum.TextXAlignment.Left,
+        TextWrapped            = true,
+        ZIndex                 = 31,
+    }, UI.spoofModal)
+end
+
+-- ───────────── 4. MODAL DE ADICIONAR MÚSICA CUSTOM (add_song.lua) ─────────────
+UI.custom = makeModal("Adicionar Música Custom (add_song.lua)", 350, 275)
+do
+    local function field(ph, y, h)
+        local t = mk("TextBox", {
+            PlaceholderText   = ph,
+            Text              = "",
+            Size              = UDim2.new(1, -28, 0, h or 32),
+            Position          = UDim2.fromOffset(14, y),
+            BackgroundColor3  = Theme.panel,
+            Font              = Theme.FONTR,
+            TextSize          = 12,
+            TextColor3        = Theme.text,
+            PlaceholderColor3 = Theme.muted,
+            BorderSizePixel   = 0,
+            ClearTextOnFocus  = false,
+            TextXAlignment    = Enum.TextXAlignment.Left,
+            TextYAlignment    = Enum.TextYAlignment.Top,
+            MultiLine         = (h ~= nil),
+            ZIndex            = 31,
+        }, UI.custom)
+        corner(t, 8)
+        stroke(t, Theme.border, 1, 0.45)
+        pad(t, 8, 10)
+        return t
+    end
+
+    local nameBox  = field("Nome da música", 46)
+    local bpmBox   = field("BPM original (ex: 140)", 84)
+    local notesBox = field("Cole o script MIDI2LUA (keypress/rest) ou grade MIDI 2", 122, 90)
+
+    local saveBtn = mk("TextButton", {
+        Text             = "SALVAR & TOCAR",
+        Size             = UDim2.new(1, -28, 0, 38),
+        Position         = UDim2.fromOffset(14, 222),
+        BackgroundColor3 = Theme.accent,
+        AutoButtonColor  = false,
+        Font             = Theme.FONTB,
+        TextSize         = 13,
+        TextColor3       = Theme.accentDark,
+        BorderSizePixel  = 0,
+        ZIndex           = 31,
+    }, UI.custom)
+    corner(saveBtn, 8)
+
+    saveBtn.MouseButton1Click:Connect(function()
+        local nm = nameBox.Text
+        local sq = notesBox.Text
+        if nm == "" or sq == "" or not isPlayableSeq(sq) then
+            notify("Preencha o nome e uma sequência MIDI 2 válida!")
+            return
+        end
+        local bpm = tonumber(bpmBox.Text) or extractMidi2LuaBPM(sq) or Config.DefaultBPM
+        local entry = { name = cleanSongName(nm), bpm = bpm, sequence = sq, midi2lua = true }
+        table.insert(State.customSongs, entry)
+        saveData()
+        processAndFilterSongs()
+        buildCategories()
+        refreshList()
+        UI.custom.Visible = false
+        playIndex(#Songs, false)
+        refreshNowPlaying()
+        notify("Custom MIDI 2 salva: " .. entry.name)
+    end)
+end
+
+CustomBtn.MouseButton1Click:Connect(function()
+    UI.custom.Visible = not UI.custom.Visible
+end)
+
+-- ───────────── 5. MODAL DE CRÉDITOS E INFO (info.lua) ─────────────
+UI.credits = makeModal("Créditos & Informações (info.lua)", 350, 235)
+do
+    local y = 46
+    for _, c in ipairs(CREDITS) do
+        mk("TextLabel", {
+            Text                   = c.emoji .. "  " .. c.name,
+            Font                   = Theme.FONTB,
+            TextSize               = 13,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, -28, 0, 18),
+            Position               = UDim2.fromOffset(16, y),
+            TextColor3             = Theme.text,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            ZIndex                 = 31,
+        }, UI.credits)
+        mk("TextLabel", {
+            Text                   = c.role,
+            Font                   = Theme.FONTR,
+            TextSize               = 11,
+            BackgroundTransparency = 1,
+            Size                   = UDim2.new(1, -28, 0, 15),
+            Position               = UDim2.fromOffset(16, y + 18),
+            TextColor3             = Theme.sub,
+            TextXAlignment         = Enum.TextXAlignment.Left,
+            ZIndex                 = 31,
+        }, UI.credits)
+        y = y + 38
+    end
+
+    local copyRepoBtn = mk("TextButton", {
+        Text             = "Copiar Link do Repositório TALENTLESS",
+        Size             = UDim2.new(1, -32, 0, 32),
+        Position         = UDim2.fromOffset(16, y + 6),
+        BackgroundColor3 = Theme.panel2,
+        AutoButtonColor  = false,
+        Font             = Theme.FONT,
+        TextSize         = 11,
+        TextColor3       = Theme.text,
+        BorderSizePixel  = 0,
+        ZIndex           = 31,
+    }, UI.credits)
+    corner(copyRepoBtn, 7)
+    stroke(copyRepoBtn, Theme.border, 1, 0.45)
+    copyRepoBtn.MouseButton1Click:Connect(function()
+        if setclipboard then
+            pcall(function() setclipboard("https://github.com/hellohellohell012321/TALENTLESS") end)
+        end
+        notify("Link copiado para a área de transferência!")
+    end)
+end
+
+-- ───────────── 6. MODAL DE IDIOMA (translator.lua) ─────────────
+UI.langModal = makeModal("Idioma / Language / Idioma", 300, 210)
+do
+    local function langBtn(label, code, y)
+        local b = mk("TextButton", {
+            Text             = label,
+            Size             = UDim2.new(1, -28, 0, 38),
+            Position         = UDim2.fromOffset(14, y),
+            BackgroundColor3 = Theme.panel2,
+            AutoButtonColor  = false,
+            Font             = Theme.FONT,
+            TextSize         = 13,
+            TextColor3       = Theme.text,
+            BorderSizePixel  = 0,
+            ZIndex           = 31,
+        }, UI.langModal)
+        corner(b, 8)
+        stroke(b, Theme.border, 1, 0.45)
+        hoverify(b, Theme.panel2, Theme.panelHover)
+        b.MouseButton1Click:Connect(function()
+            State.lang = code
+            saveData()
+            applyLang()
+            UI.langModal.Visible = false
+            notify("Idioma: " .. label)
+        end)
+        return b
+    end
+    langBtn("Português (BR)", "pt", 50)
+    langBtn("English",        "en", 96)
+    langBtn("Español",        "es", 142)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CONEXÕES DOS BOTÕES PRINCIPAIS
+-- ══════════════════════════════════════════════════════════════
+PlayBtn.MouseButton1Click:Connect(function()
+    playIndex(State.currentSong, State.autoNext)
+    refreshNowPlaying()
+    notify("▶ " .. (curSong() and curSong().name or ""))
+end)
+
+ShuffleBtn.MouseButton1Click:Connect(function()
+    if #PlayableIdx == 0 then return end
+    State.shuffleEnabled = true
+    State.autoNext       = true
+    State.currentSong    = getRandomPlayable()
+    playIndex(State.currentSong, true)
+    refreshNowPlaying()
+    refreshList()
+    notify("Shuffle ativado")
+end)
+
+RandomBtn.MouseButton1Click:Connect(function()
+    if #PlayableIdx == 0 then return end
+    State.currentSong = getRandomPlayable()
+    playIndex(State.currentSong, false)
+    refreshNowPlaying()
+    refreshList()
+    notify("▶ " .. (curSong() and curSong().name or ""))
+end)
+
+UI.playPauseBtn.MouseButton1Click:Connect(function() pauseResume(); refreshNowPlaying() end)
+StopBtn.MouseButton1Click:Connect(function() stopPlayback(); refreshNowPlaying() end)
+NextBtn.MouseButton1Click:Connect(function() nextSong(); startPlayback(); refreshNowPlaying(); refreshList() end)
+PrevBtn.MouseButton1Click:Connect(function() prevSong(); startPlayback(); refreshNowPlaying(); refreshList() end)
+
+QueueBtn.MouseButton1Click:Connect(function()
+    if not curSong() then return end
+    table.insert(State.queue, State.currentSong)
+    refreshNowPlaying()
+    notify("Adicionado à fila (" .. #State.queue .. ")")
+end)
+
+UI.favBtn.MouseButton1Click:Connect(function()
+    toggleFav(State.currentSong)
+    refreshNowPlaying()
+    refreshList()
+    buildCategories()
+    setCategory(activeCategory)
+end)
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(refreshList)
+UI.helpBtn.MouseButton1Click:Connect(function() UI.credits.Visible = not UI.credits.Visible end)
+UI.langBtn.MouseButton1Click:Connect(function() UI.langModal.Visible = not UI.langModal.Visible end)
+
+-- ══════════════════════════════════════════════════════════════
+--  MINIMIZAR (LILGUI HUD FLUTUANTE), RESTAURAR E FECHAR
+-- ══════════════════════════════════════════════════════════════
+UI.restoreBtn = mk("TextButton", {
+    Text                   = "BR",
+    Size                   = UDim2.fromOffset(46, 46),
+    Position               = UDim2.new(0, 18, 0.5, -23),
+    BackgroundColor3       = Theme.panel,
+    BackgroundTransparency = 0.12,
+    AutoButtonColor        = false,
+    Font                   = Theme.FONTB,
+    TextSize               = 16,
+    TextColor3             = Theme.text,
+    BorderSizePixel        = 0,
+    Visible                = false,
+    ZIndex                 = 40,
+}, ScreenGui)
+corner(UI.restoreBtn, 12)
+stroke(UI.restoreBtn, Theme.borderActive, 1.2, 0.30)
+
+local function restoreWindow()
+    State.isMinimized = false
+    UI.restoreBtn.Visible = false
+    Root.Visible = true
+    Root.Size = UDim2.fromOffset(WINDOW_SIZE.X, WINDOW_SIZE.Y)
+end
+
+local function minimizeWindow()
+    State.isMinimized = true
+    Root.Visible = false
+    UI.restoreBtn.Visible = true
+end
+
+UI.restoreBtn.MouseButton1Click:Connect(restoreWindow)
+MinBtn.MouseButton1Click:Connect(minimizeWindow)
+
+local function fullCleanup()
+    stopPlayback()
+    releaseAllKeys()
+    for _, c in ipairs(Connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    Connections = {}
+    pcall(function() ScreenGui:Destroy() end)
+end
+
+_G.ByRimuruCleanup = fullCleanup
+
+CloseBtn.MouseButton1Click:Connect(fullCleanup)
+ScreenGui.AncestryChanged:Connect(function(_, parent)
+    if not parent then fullCleanup() end
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  ARRASTAR JANELA E SCRUBBING DA BARRA DE PROGRESSO
+-- ══════════════════════════════════════════════════════════════
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    TopBar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            dragStart = i.Position
+            startPos  = Root.Position
+            i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    trackConn(UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            Root.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end))
+end
+
+trackConn(UserInputService.InputChanged:Connect(function(i)
+    if seekingBar and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+        updateSeekFromInput(i.Position.X)
+    end
+end))
+trackConn(UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        seekingBar = false
+    end
+end))
+
+-- ══════════════════════════════════════════════════════════════
+--  ATUALIZAÇÃO DA BARRA DE PROGRESSO E ATALHO RIGHTALT
+-- ══════════════════════════════════════════════════════════════
+trackConn(RunService.RenderStepped:Connect(function()
+    local target = State.isPlaying and State.progress or 0
+    if not seekingBar then
+        local cur = UI.progFill.Size.X.Scale
+        UI.progFill.Size = UDim2.new(cur + (target - cur) * 0.25, 0, 1, 0)
+    end
+    if State.isPlaying then
+        UI.playPauseBtn.Text = State.isPaused and "▶" or "⏸"
+        local s = curSong()
+        UI.nowText.Text = (tr("note")):format(
+            s and s.name or "", math.floor(State.progress * 100), State.currentNote, State.totalNotes
+        )
+    else
+        UI.playPauseBtn.Text = "⏯"
+        if UI.progFill.Size.X.Scale < 0.01 then
+            UI.nowText.Text = tr("ready")
+        end
+    end
+end))
+
+trackConn(UserInputService.InputBegan:Connect(function(i, gpe)
+    if gpe then return end
+    if i.KeyCode == Enum.KeyCode.RightAlt then
+        if State.isMinimized or not Root.Visible then
+            restoreWindow()
+        else
+            minimizeWindow()
+        end
+    end
+end))
+
+-- ══════════════════════════════════════════════════════════════
+--  SOM ÚNICO DE INICIALIZAÇÃO (CURTO, DISCRETO, SEM REPETIÇÃO)
+-- ══════════════════════════════════════════════════════════════
+if not (_G.talentlessSettings and _G.talentlessSettings.mutesfx) then
+    task.spawn(function()
+        pcall(function()
+            local s = Instance.new("Sound")
+            s.Name    = "ByRimuruStartupSound"
+            s.SoundId = RESOURCES.StartupSoundId
+            s.Volume  = RESOURCES.StartupSoundVolume
+            s.Looped  = false
+            s.Parent  = SoundService
+            s:Play()
+            task.delay(2.5, function()
+                pcall(function() s:Destroy() end)
+            end)
+        end)
+    end)
+end
+
+applyLang()
+notify((tr("loaded")):format(#PlayableIdx))
